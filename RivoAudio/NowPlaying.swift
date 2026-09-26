@@ -19,7 +19,7 @@ struct NowPlayingView: View {
                 PlayerBackdrop(image: cover)
                 if let song = player.song {
                     GeometryReader { geometry in
-                        ScrollView {
+                        ScrollView(.vertical) {
                             VStack(alignment: .leading, spacing: 14) {
                                 header(song)
                                 media(song, width: min(geometry.size.width - 48, geometry.size.height * 0.34, 380))
@@ -32,7 +32,10 @@ struct NowPlayingView: View {
                                     .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
                                     .frame(maxWidth: .infinity)
                                 footer
-                            }.padding(24).frame(maxWidth: 500).frame(maxWidth: .infinity)
+                            }.padding(.horizontal, 24).padding(.vertical, 20)
+                                .frame(maxWidth: 500)
+                                .frame(maxWidth: .infinity)
+                                .clipped()
                         }
                     }
                 } else {
@@ -92,13 +95,14 @@ struct NowPlayingView: View {
         }.frame(maxWidth: .infinity)
     }
     private func title(_ song: Song) -> some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(song.title).font(.title2.bold()).lineLimit(2)
-                Text(song.artist).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
-                Text(song.album).font(.caption).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+                Text(song.title).font(.title2.bold()).lineLimit(2).truncationMode(.tail)
+                Text(song.artist).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.tail)
+                Text(song.album).font(.caption).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.tail)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
             Button {
                 if var current = library.songs.first(where: { $0.id == song.id }) {
                     current.rating = current.rating == 5 ? 0 : 5; library.update(current)
@@ -108,6 +112,7 @@ struct NowPlayingView: View {
                     .font(.title3).frame(width: 44, height: 44)
             }.accessibilityLabel("Marcar con cinco estrellas")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     @ViewBuilder private var sourceSwitch: some View {
         if player.canSwitchToAudio && (!player.videoMatches.isEmpty || player.isVideoMode) {
@@ -174,54 +179,84 @@ struct NowPlayingView: View {
 struct LyricsView: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\\.dismiss) private var dismiss
     let songID: String
     @State private var lyrics = ""
     @State private var suggestions: [(title: String, artist: String, lyrics: String)] = []
     @State private var searching = false
     @State private var status: String?
+    @State private var cover: UIImage?
     private var song: Song? { library.songs.first { $0.id == songID } }
     private var lines: [LyricLine] { LRC.parse(lyrics) }
+    private var activeID: Int? {
+        guard player.song?.id == songID else { return nil }
+        return lines.last(where: { $0.time <= player.elapsed })?.id
+    }
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if !lines.isEmpty {
-                            ForEach(lines) { line in
-                                Button {
-                                    if player.song?.id == songID { player.seek(to: line.time) }
-                                } label: {
-                                    Text(line.text.isEmpty ? "♪" : line.text)
-                                        .font(.title3.weight(line.time <= player.elapsed ? .semibold : .regular))
-                                        .foregroundStyle(line.time <= player.elapsed ? .primary : .secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }.buttonStyle(.plain).id(line.id)
+            ZStack {
+                PlayerBackdrop(image: cover)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            if !lines.isEmpty {
+                                ForEach(lines) { line in
+                                    Button {
+                                        if player.song?.id == songID { player.seek(to: line.time) }
+                                    } label: {
+                                        Text(line.text.isEmpty ? "♪" : line.text)
+                                            .font(.system(size: 32, weight: line.id == activeID ? .bold : .semibold, design: .rounded))
+                                            .foregroundStyle(.white.opacity(line.id == activeID ? 1 : 0.42))
+                                            .multilineTextAlignment(.leading)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(line.text)
+                                    .id(line.id)
+                                }
+                            } else if !lyrics.isEmpty {
+                                Text(lyrics)
+                                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("Esta letra no contiene tiempos; se muestra sin sincronización.")
+                                    .font(.footnote).foregroundStyle(.white.opacity(0.6))
+                            } else {
+                                ContentUnavailableView("Sin letra sincronizada", systemImage: "text.quote")
                             }
-                        } else if !lyrics.isEmpty {
-                            Text(lyrics).frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            ContentUnavailableView("Sin letra sincronizada", systemImage: "text.quote")
+                            if let status { Text(status).font(.footnote).foregroundStyle(.white.opacity(0.7)) }
+                            ForEach(Array(suggestions.enumerated()), id: \\.offset) { _, suggestion in
+                                Button("Usar: \\(suggestion.title) — \\(suggestion.artist)") { save(suggestion.lyrics) }
+                            }
                         }
-                        if let status { Text(status).font(.footnote).foregroundStyle(.secondary) }
-                        ForEach(Array(suggestions.enumerated()), id: \.offset) { _, suggestion in
-                            Button("Usar: \(suggestion.title) — \(suggestion.artist)") { save(suggestion.lyrics) }
-                        }
-                    }.padding()
-                }
-                .onChange(of: player.elapsed) { _, elapsed in
-                    guard player.song?.id == songID, let active = lines.last(where: { $0.time <= elapsed }) else { return }
-                    withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(active.id, anchor: .center) }
+                        .padding(.horizontal, 26).padding(.vertical, 32)
+                        .frame(maxWidth: 600, alignment: .leading)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .onChange(of: activeID) { _, id in
+                        guard let id else { return }
+                        withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
+                    }
+                    .onChange(of: lyrics) { _, _ in
+                        if let id = activeID { proxy.scrollTo(id, anchor: .center) }
+                    }
                 }
             }
             .navigationTitle("Letras")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Cerrar") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(searching ? "Buscando…" : "Buscar") { Task { await lookup() } }.disabled(searching)
                 }
             }
-            .onAppear { if let song { lyrics = library.localLyrics(for: song) ?? "" } }
+            .tint(PlayerStyle.accent)
+            .preferredColorScheme(.dark)
+            .onAppear {
+                if let song { lyrics = library.localLyrics(for: song) ?? ""; cover = library.image(for: song) }
+            }
         }
     }
     private func save(_ value: String) {
@@ -236,6 +271,6 @@ struct LyricsView: View {
             if let match = try await LyricSearch.fetch(song: song) { save(match); return }
             suggestions = try await LyricSearch.suggested(song: song)
             status = suggestions.isEmpty ? "Sin coincidencias. Puedes agregar un archivo .lrc junto a la canción." : "Elige una coincidencia para evitar asignar la letra equivocada."
-        } catch { status = "No se pudo consultar la letra: \(error.localizedDescription)" }
+        } catch { status = "No se pudo consultar la letra: \\(error.localizedDescription)" }
     }
 }

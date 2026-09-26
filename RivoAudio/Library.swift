@@ -18,8 +18,17 @@ struct Song: Identifiable, Codable, Hashable {
     var metadataVerified: Bool? = nil
 }
 
+struct MusicFolder: Identifiable, Codable {
+    var id: UUID = UUID()
+    var name: String
+    var sourcePath: String
+    var targetName: String
+    var bookmark: Data
+}
+
 @MainActor final class MusicLibrary: ObservableObject {
     @Published private(set) var songs: [Song] = []
+    @Published private(set) var folders: [MusicFolder] = []
     @Published var message: String? = nil
     @Published var artistPhotos: [String: String] = [:]
     @Published var photoCredits: [String: ArtistPhotoCredit] = [:]
@@ -29,6 +38,7 @@ struct Song: Identifiable, Codable, Hashable {
     let documents: URL
     var musicDirectory: URL { documents.appendingPathComponent("Music", isDirectory: true) }
     private var indexURL: URL { documents.appendingPathComponent("library.json") }
+    private var foldersURL: URL { documents.appendingPathComponent("musicFolders.json") }
     private var photosURL: URL { documents.appendingPathComponent("artistPhotos.json") }
     static let extensions: Set<String> = ["mp3", "m4a", "aac", "alac", "wav", "aif", "aiff", "caf", "flac", "mp4", "m4v", "mov"]
 
@@ -36,6 +46,7 @@ struct Song: Identifiable, Codable, Hashable {
         self.documents = documents ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: indexURL), let value = try? JSONDecoder().decode([Song].self, from: data) { songs = value }
+        if let data = try? Data(contentsOf: foldersURL), let value = try? JSONDecoder().decode([MusicFolder].self, from: data) { folders = value }
         if let data = try? Data(contentsOf: photosURL), let value = try? JSONDecoder().decode([String: String].self, from: data) { artistPhotos = value }
         if let data = try? Data(contentsOf: self.documents.appendingPathComponent("artistPhotoCredits.json")),
            let saved = try? JSONDecoder().decode([String: ArtistPhotoCredit].self, from: data) { photoCredits = saved }
@@ -60,6 +71,7 @@ struct Song: Identifiable, Codable, Hashable {
     func url(for song: Song) -> URL { musicDirectory.appendingPathComponent(song.id) }
     func save() {
         if let data = try? JSONEncoder().encode(songs) { try? data.write(to: indexURL, options: .atomic) }
+        if let data = try? JSONEncoder().encode(folders) { try? data.write(to: foldersURL, options: .atomic) }
         if let data = try? JSONEncoder().encode(artistPhotos) { try? data.write(to: photosURL, options: .atomic) }
     }
     func update(_ song: Song) {
@@ -114,6 +126,91 @@ struct Song: Identifiable, Codable, Hashable {
         await scan()
         message = failures == 0 ? "Importación terminada" : "No se pudieron copiar \(failures) archivos"
     }
+    func importFolder(_ source: URL) async {
+        let access = source.startAccessingSecurityScopedResource()
+        defer { if access { source.stopAccessingSecurityScopedResource() } }
+        do {
+            guard (try source.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true else {
+                throw ServiceError(message: "Selecciona una carpeta de música.")
+            }
+            let existing = folders.first { $0.sourcePath == source.standardizedFileURL.path }
+            let name = existing?.targetName ?? uniqueFolderName(source.lastPathComponent)
+            let bookmark = try source.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            let count = try await copyFolder(source, to: musicDirectory.appendingPathComponent(name, isDirectory: true))
+            if existing == nil {
+                folders.append(MusicFolder(name: source.lastPathComponent, sourcePath: source.standardizedFileURL.path,
+                                           targetName: name, bookmark: bookmark))
+            }
+            await scan()
+            message = "Carpeta importada: \\(count) archivos nuevos o actualizados."
+        } catch { message = "No se pudo importar la carpeta: \\(error.localizedDescription)" }
+    }
+
+    func rescanFolder(_ folder: MusicFolder) async {
+        do {
+            var stale = false
+            let source = try URL(resolvingBookmarkData: folder.bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let access = source.startAccessingSecurityScopedResource()
+            defer { if access { source.stopAccessingSecurityScopedResource() } }
+            guard access || source.isFileURL && FileManager.default.isReadableFile(atPath: source.path) else {
+                throw ServiceError(message: "El acceso caducó. Vuelve a añadir la carpeta desde Archivos.")
+            }
+            let count = try await copyFolder(source, to: musicDirectory.appendingPathComponent(folder.targetName, isDirectory: true))
+            if stale, let index = folders.firstIndex(where: { $0.id == folder.id }) {
+                folders[index].bookmark = try source.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+            }
+            await scan()
+            message = "Carpeta actualizada: \\(count) archivos nuevos o modificados."
+        } catch { message = "No se pudo actualizar \\(folder.name): \\(error.localizedDescription)" }
+    }
+
+    func removeFolder(_ folder: MusicFolder) async {
+        do {
+            let destination = musicDirectory.appendingPathComponent(folder.targetName, isDirectory: true)
+            try FileManager.default.removeItem(at: destination)
+            folders.removeAll { $0.id == folder.id }
+            await scan()
+            message = "Se quitó \\(folder.name) de la biblioteca. La carpeta original sigue en Archivos."
+        } catch { message = "No se pudo quitar la carpeta: \\(error.localizedDescription)" }
+    }
+
+    private func uniqueFolderName(_ name: String) -> String {
+        let safe = name.isEmpty ? "Música importada" : name
+        var candidate = safe
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: musicDirectory.appendingPathComponent(candidate).path) {
+            candidate = "\\(safe) (\\(suffix))"; suffix += 1
+        }
+        return candidate
+    }
+
+    private func copyFolder(_ source: URL, to destination: URL) async throws -> Int {
+        guard let enumerator = FileManager.default.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+                                                               options: [.skipsHiddenFiles]) else {
+            throw ServiceError(message: "No se puede leer esta carpeta desde Archivos.")
+        }
+        let files = (enumerator.allObjects as? [URL] ?? []).filter {
+            Self.extensions.contains($0.pathExtension.lowercased()) || $0.pathExtension.lowercased() == "lrc"
+        }
+        var count = 0
+        var failures = 0
+        for file in files {
+            guard let relative = MediaFiles.relativePath(of: file, under: source) else { continue }
+            let target = destination.appendingPathComponent(relative)
+            do {
+                let sourceSize = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                let targetSize = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize
+                if sourceSize == targetSize, targetSize != nil { continue }
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+                try await MediaFiles.copyForImport(from: file, to: target)
+                count += 1
+            } catch { failures += 1 }
+        }
+        if failures > 0 { throw ServiceError(message: "\\(failures) archivos no pudieron copiarse. Revisa que estén descargados en Archivos.") }
+        return count
+    }
+
     private func uniqueFile(for filename: String) -> URL {
         let original = musicDirectory.appendingPathComponent(filename)
         guard FileManager.default.fileExists(atPath: original.path) else { return original }

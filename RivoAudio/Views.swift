@@ -9,6 +9,8 @@ struct LibraryView: View {
     @EnvironmentObject var ftp: FTPServer
     @State private var search = ""
     @State private var showImporter = false
+    @State private var showFolderImporter = false
+    @State private var showImportOptions = false
     @State private var showPlayer = false
     @State private var selection = 0
     @State private var editingSong: Song?
@@ -54,7 +56,7 @@ struct LibraryView: View {
                 .searchable(text: $search, prompt: "Canción, artista o álbum")
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { Button { Task { await library.scan() } } label: { Image(systemName: "arrow.clockwise") } }
-                    ToolbarItem(placement: .topBarTrailing) { Button { showImporter = true } label: { Image(systemName: "plus") } }
+                    ToolbarItem(placement: .topBarTrailing) { Button { showImportOptions = true } label: { Image(systemName: "plus") }.accessibilityLabel("Añadir música") }
                 }
             }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Canciones", systemImage: "music.note") }.tag(0)
 
@@ -62,7 +64,7 @@ struct LibraryView: View {
                 List(library.songs.map(\.artist).uniqued().sorted(), id: \.self) { artist in
                     NavigationLink { ArtistView(artist: artist) } label: {
                         HStack {
-                            ArtworkView(image: library.artistImage(artist), size: 46)
+                            ArtworkView(image: library.artistImage(artist) ?? library.songs.first(where: { $0.artist == artist }).flatMap { library.image(for: $0) }, size: 46)
                                 .task { await library.loadArtistPhoto(artist) }
                             VStack(alignment: .leading) {
                                 Text(artist)
@@ -81,6 +83,23 @@ struct LibraryView: View {
 
             NavigationStack {
                 Form {
+                    Section("Carpetas de música") {
+                        Button("Añadir carpeta desde Archivos") { showFolderImporter = true }
+                        ForEach(library.folders) { folder in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(folder.name).font(.headline)
+                                HStack {
+                                    Button("Volver a escanear") { Task { await library.rescanFolder(folder) } }
+                                    Spacer()
+                                    Button("Quitar de la biblioteca", role: .destructive) {
+                                        Task { await library.removeFolder(folder) }
+                                    }
+                                }.font(.footnote)
+                            }
+                        }
+                        Text("La música se copia conservando sus subcarpetas. Quitarla aquí no borra la carpeta original de Archivos.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     Section("Transferencia FTP · misma red Wi-Fi") {
                         Toggle("Activar FTP", isOn: Binding(get: { ftp.running }, set: { $0 ? ftp.start() : ftp.stop() }))
                         if ftp.running {
@@ -99,6 +118,16 @@ struct LibraryView: View {
         }
         .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
         .sheet(item: $editingSong) { SongEditor(songID: $0.id) }
+        .confirmationDialog("Añadir música", isPresented: $showImportOptions) {
+            Button("Seleccionar carpeta") { showFolderImporter = true }
+            Button("Seleccionar archivos") { showImporter = true }
+        }
+        .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case .success(let url): Task { await library.importFolder(url) }
+            case .failure(let error): library.message = error.localizedDescription
+            }
+        }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): Task { await library.importFiles(urls) }
@@ -251,10 +280,10 @@ struct ArtistView: View {
     var body: some View {
         List {
             Section {
-                HStack { Spacer(); ArtworkView(image: library.artistImage(artist), size: 180); Spacer() }
+                HStack { Spacer(); ArtworkView(image: library.artistImage(artist) ?? songs.first.flatMap { library.image(for: $0) }, size: 180); Spacer() }
                 if let credit = library.photoCredits[artist] {
                     Text(credit.author).font(.caption)
-                    Link("Wikimedia Commons · \(credit.license)", destination: credit.sourceURL).font(.caption)
+                    Link(credit.license, destination: credit.sourceURL).font(.caption)
                     if let license = credit.licenseURL { Link("Licencia", destination: license).font(.caption) }
                 }
                 if let status = library.photoStatus[artist] { Text(status).font(.caption).foregroundStyle(.secondary) }
