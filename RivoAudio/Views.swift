@@ -11,6 +11,7 @@ struct LibraryView: View {
     @State private var showImporter = false
     @State private var showPlayer = false
     @State private var selection = 0
+    @State private var editingSong: Song?
 
     private var filtered: [Song] {
         guard !search.isEmpty else { return library.songs }
@@ -23,16 +24,32 @@ struct LibraryView: View {
                     if library.songs.isEmpty {
                         ContentUnavailableView("Tu música vive aquí", systemImage: "music.note.list", description: Text("Importa desde Archivos o copia música a la carpeta Music de RIVØ Audio desde tu computadora."))
                     }
+                    if !library.songs.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("RIVØ AUDIO").font(.caption.bold()).tracking(3).foregroundStyle(PlayerStyle.accent)
+                            Text("Tu colección, a tu ritmo.").font(.title3.bold())
+                            HStack {
+                                Text("\(library.songs.count) pistas").font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button { if let first = filtered.randomElement() { player.shuffle = true; play(first) } } label: { Label("Mezclar", systemImage: "shuffle") }.buttonStyle(.bordered)
+                            }
+                        }.padding(.vertical, 8).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    }
                     ForEach(filtered) { song in
-                        NavigationLink {
-                            SongDetailView(songID: song.id)
-                        } label: {
+                        Button { play(song) } label: {
                             SongRow(song: song).contentShape(Rectangle())
-                        }.swipeActions(edge: .leading) {
+                        }.buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Reproducir") { play(song) }
+                            Button("Editar información y carátula") { editingSong = song }
+                        }.listRowBackground(PlayerStyle.surface.opacity(0.7))
+                        .swipeActions(edge: .leading) {
                             Button { play(song) } label: { Label("Reproducir", systemImage: "play.fill") }.tint(.pink)
                         }
                     }
                 }
+                .scrollContentBackground(.hidden)
+                .background(PlayerBackdrop())
                 .navigationTitle("Biblioteca")
                 .searchable(text: $search, prompt: "Canción, artista o álbum")
                 .toolbar {
@@ -82,28 +99,31 @@ struct LibraryView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if let song = player.song {
-                Button { showPlayer = true } label: {
-                    HStack(spacing: 12) {
-                        ArtworkView(image: library.image(for: song), size: 42)
-                        VStack(alignment: .leading) {
-                            Text(song.title).font(.subheadline.bold()).lineLimit(1)
-                            Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer()
-                        Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").font(.title3) }
-                            .buttonStyle(.plain)
-                    }.padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)).padding(.horizontal, 12)
-                }.buttonStyle(.plain)
+                HStack(spacing: 12) {
+                    Button { showPlayer = true } label: {
+                        HStack {
+                            ArtworkView(image: library.image(for: song), size: 44)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(song.title).font(.subheadline.bold()).lineLimit(1)
+                                Text(player.preparingAudio ? "Preparando audio…" : song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }.contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Abrir reproductor")
+                    Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }.buttonStyle(.plain).disabled(player.preparingAudio)
+                    Button { player.next() } label: { Image(systemName: "forward.end.fill").frame(width: 36, height: 44) }.buttonStyle(.plain).accessibilityLabel("Siguiente")
+                }.padding(10).background(PlayerStyle.surface, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12)
             }
         }
-        .sheet(isPresented: $showPlayer) { NowPlayingView() }
+        .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
+        .sheet(item: $editingSong) { SongEditor(songID: $0.id) }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): Task { await library.importFiles(urls) }
             case .failure(let error): library.message = error.localizedDescription
             }
         }
-        .alert("RIVØ Audio", isPresented: Binding(get: { library.message != nil || player.error != nil }, set: { if !$0 { library.message = nil; player.error = nil } })) {
+        .alert("RIVØ Audio", isPresented: Binding(get: { library.message != nil || (player.error != nil && !showPlayer) }, set: { if !$0 { library.message = nil; player.error = nil } })) {
             Button("Aceptar") { library.message = nil; player.error = nil }
         } message: { Text(library.message ?? player.error ?? "") }
     }
@@ -152,7 +172,7 @@ struct SongDetailView: View {
                     Section {
                         Button(song.isVideo ? "Ver video" : "Reproducir") {
                             if song.isVideo { player.play(song, from: library.songs.filter { !$0.isVideo }); showVideo = true }
-                            else { player.play(song, from: library.songs.filter { !$0.isVideo }) }
+                            else { player.play(song, from: library.songs.filter { !$0.isVideo }); showVideo = true }
                         }
                         Button("Letras sincronizadas") { showLyrics = true }
                         Button("Editar información y carátula") { showEditor = true }
@@ -256,28 +276,53 @@ struct ArtistView: View {
 struct EqualizerView: View {
     @EnvironmentObject var player: AudioPlayer
     var body: some View {
-        Form {
-            Toggle("EQ activo", isOn: $player.eqEnabled)
-            Picker("Bandas", selection: $player.bandCount) {
-                Text("10 bandas").tag(10); Text("15 bandas").tag(15); Text("31 bandas").tag(31)
-            }
-            Picker("Preset", selection: $player.presetName) {
-                ForEach(AudioPlayer.presets.keys.sorted(), id: \.self) { Text($0).tag($0) }
-                Text("Personalizado").tag("Personalizado")
-            }.onChange(of: player.presetName) { _, name in player.setPreset(name) }
-            Section("\(player.bandCount) bandas · ±12 dB") {
-                ForEach(AudioPlayer.activeIndices(player.bandCount), id: \.self) { index in
-                    let frequency = AudioPlayer.frequencies[index]
+        ZStack {
+            PlayerBackdrop()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
                     HStack {
-                        Text(frequency >= 1000 ? String(format: "%gk", frequency / 1000) : "\(Int(frequency))")
-                            .frame(width: 35, alignment: .leading).font(.caption.monospacedDigit())
-                        Slider(value: Binding(get: { Double(player.gains[index]) }, set: { player.setGain(Float($0), band: index) }), in: -12...12, step: 0.5)
-                        Text(String(format: "%+.1f", player.gains[index])).font(.caption.monospacedDigit()).frame(width: 42)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("DALE TU SONIDO").font(.caption.bold()).tracking(2).foregroundStyle(PlayerStyle.accent)
+                            Text(player.presetName).font(.largeTitle.bold())
+                        }
+                        Spacer()
+                        Toggle("EQ activo", isOn: $player.eqEnabled).labelsHidden().accessibilityLabel("EQ activo")
                     }
-                }
+                    Picker("Bandas", selection: $player.bandCount) {
+                        Text("10 bandas").tag(10); Text("15 bandas").tag(15); Text("31 bandas").tag(31)
+                    }.pickerStyle(.segmented)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(AudioPlayer.presets.keys.sorted(), id: \.self) { name in
+                                Button { player.setPreset(name) } label: {
+                                    Text(name).font(.subheadline.weight(.semibold)).padding(.horizontal, 18).padding(.vertical, 11)
+                                        .background(player.presetName == name ? PlayerStyle.accent.opacity(0.25) : .white.opacity(0.06), in: Capsule())
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    HStack { Text("+12 dB"); Spacer(); Text("Desliza para ver más bandas") }.font(.caption2).foregroundStyle(.secondary)
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            ForEach(AudioPlayer.activeIndices(player.bandCount), id: \.self) { index in band(index) }
+                        }.padding(.horizontal, 8).padding(.vertical, 20)
+                    }.background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 24))
+                    HStack { Text("−12 dB"); Spacer(); Button("Restablecer") { player.setPreset("Plano") } }.font(.caption)
+                    Text(player.isVideoMode ? "El ecualizador se aplica en modo Audio." : "Ajusta cada frecuencia. Tus cambios se guardan automáticamente.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }.padding(24)
             }
-            Text("Las 10 bandas clásicas son el perfil inicial. Puedes activar 15 o 31 y ajustar las frecuencias adicionales.").font(.footnote).foregroundStyle(.secondary)
-        }
+        }.tint(PlayerStyle.accent).preferredColorScheme(.dark)
+    }
+    private func band(_ index: Int) -> some View {
+        let frequency = AudioPlayer.frequencies[index]
+        return VStack(spacing: 10) {
+            Text(String(format: "%+.1f", player.gains[index])).font(.caption2.monospacedDigit()).foregroundStyle(PlayerStyle.accent)
+            Slider(value: Binding(get: { Double(player.gains[index]) }, set: { player.setGain(Float($0), band: index) }), in: -12...12, step: 0.5)
+                .frame(width: 190).rotationEffect(.degrees(-90)).frame(width: 40, height: 200)
+                .accessibilityLabel("\(Int(frequency)) hercios")
+            Text(frequency >= 1000 ? String(format: "%gk", frequency / 1000) : "\(Int(frequency))").font(.caption2.monospacedDigit())
+        }.frame(width: 44).padding(.vertical, 12).background(.black.opacity(0.25), in: Capsule())
     }
 }
 

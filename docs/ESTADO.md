@@ -58,3 +58,12 @@ La ejecución [36210104860](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actio
 ## v0.1.2 · Corrección de instalación con SideStore
 
 El primer intento físico rechazó el parámetro `appIdName` con valor `RIVØ Audio`. Se cambia `CFBundleDisplayName` a `Rivo Audio` (ASCII), versión 0.1.2, build 3. La identidad visual dentro de la app conserva RIVØ. Pendiente confirmar la instalación en el iPhone con esta IPA.
+
+## v0.1.3 · Lectura de audio y nueva interfaz
+
+- La v0.1.2 ya se instaló y abrió en el iPhone. Se reportó un error Core Audio 2003334207 al reproducir Acid Drip. No se recibió el archivo original; este código es genérico y no confirma por sí solo la causa.
+- Importación coordinada con proveedores de Archivos/iCloud, copia temporal y validación de archivo no vacío. Rutas relativas por componentes canónicos para evitar discrepancias de enlaces simbólicos.
+- Si AVAudioFile no abre el archivo, se intenta decodificar su pista con AVAssetReader a PCM temporal, manteniendo el motor con EQ. No modifica el original. Errores explicativos para archivos vacíos, inaccesibles, protegidos o incompatibles.
+- Reproductor oscuro con carátula amplia, fondo difuminado, controles circulares, acceso a EQ/letras/cola y forma de onda muestreada del audio. La biblioteca abre directamente el reproductor; menú contextual para editar. EQ con controles verticales y presets rápidos.
+- Pruebas nuevas: importación de nombres Unicode y caracteres reservados, rutas con enlaces simbólicos, AAC a PCM y reproducción con EQ, archivos vacíos/ausentes e interfaz del reproductor.
+- Pendiente reproducir el archivo original en el teléfono. El respaldo no añade códecs que iOS no soporte.

@@ -6,6 +6,11 @@ import Combine
 @MainActor final class AudioPlayer: ObservableObject {
     @Published private(set) var song: Song?
     @Published private(set) var playing = false
+    @Published private(set) var preparingAudio = false
+    @Published private(set) var audioFormat = ""
+    @Published private(set) var activeAudioURL: URL?
+    private var preparation: Task<Void, Never>?
+    private var resumeAfterPreparation = true
     @Published private(set) var elapsed: TimeInterval = 0
     @Published var error: String?
     @Published private(set) var videoPlayer: AVPlayer?
@@ -52,6 +57,7 @@ import Combine
     private var file: AVAudioFile?
     private var startFrame: AVAudioFramePosition = 0
     private var queue: [Song] = []
+    var queuedSongs: [Song] { queue }
     private var currentIndex = 0
     private var timer: Timer?
     private var playStartedAt: Date?
@@ -153,6 +159,7 @@ import Combine
         let position = elapsed
         generation += 1; let epoch = generation
         switchingMedia = true
+        preparation?.cancel(); preparation = nil; preparingAudio = false
         node.stop(); engine.stop(); videoPlayer?.pause(); playing = false
         updateNowPlaying()
         defer { if generation == epoch { switchingMedia = false } }
@@ -202,7 +209,9 @@ import Combine
         open(song, at: min(position, max(0, song.duration - 0.05)), preservingListen: true)
         if !shouldPlay { pause() }
     }
-    private func open(_ selected: Song, at seconds: TimeInterval, preservingListen: Bool = false) {
+    private func open(_ selected: Song, at seconds: TimeInterval, preservingListen: Bool = false, preparedURL: URL? = nil, startPlaying: Bool = true) {
+        preparation?.cancel(); preparation = nil; preparingAudio = false
+        error = nil
         if !preservingListen {
             listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
         }
@@ -213,12 +222,18 @@ import Combine
         generation += 1
         let scheduledGeneration = generation
         node.stop(); engine.stop(); playing = false; file = nil
+        let source = library?.url(for: selected) ?? URL(fileURLWithPath: selected.id)
+        var openingFile = true
         do {
-            let audio = try AVAudioFile(forReading: library?.url(for: selected) ?? URL(fileURLWithPath: selected.id))
+            try MediaFiles.validate(source)
+            let audio = try AVAudioFile(forReading: preparedURL ?? source)
+            openingFile = false
             file = audio
+            activeAudioURL = preparedURL ?? source
             var loadedSong = selected
             loadedSong.duration = Double(audio.length) / audio.processingFormat.sampleRate
             song = loadedSong
+            audioFormat = "\(source.pathExtension.uppercased()) · \(Int(audio.processingFormat.sampleRate)) Hz · \(audio.processingFormat.channelCount) canales"
             startFrame = max(0, min(audio.length, AVAudioFramePosition(seconds * audio.processingFormat.sampleRate)))
             let remaining = audio.length - startFrame
             guard remaining > 0 else { playing = false; error = "El archivo está vacío o el formato no se puede reproducir"; return }
@@ -236,19 +251,42 @@ import Combine
             }
             elapsed = seconds
             lastSamplePosition = seconds
-            node.play(); playing = true
+            if startPlaying { node.play(); playing = true }
             if !preservingListen, let song { lastFM?.nowPlaying(song) }
             updateNowPlaying()
         } catch {
-            playing = false; file = nil; song = nil; updateNowPlaying(); self.error = "No se pudo reproducir \(selected.title): \(error.localizedDescription)"
+            playing = false; file = nil
+            if openingFile, preparedURL == nil, (try? MediaFiles.validate(source)) != nil {
+                song = selected; elapsed = seconds; preparingAudio = true; resumeAfterPreparation = startPlaying
+                updateNowPlaying()
+                preparation = Task { [weak self] in
+                    do {
+                        let decoded = try await AudioFileLoader.shared.decode(source)
+                        guard let self, self.generation == scheduledGeneration, !Task.isCancelled else { return }
+                        let shouldPlay = self.resumeAfterPreparation
+                        self.open(selected, at: seconds, preservingListen: true, preparedURL: decoded, startPlaying: shouldPlay)
+                        if shouldPlay, !preservingListen, self.error == nil { self.lastFM?.nowPlaying(selected) }
+                    } catch {
+                        guard let self, self.generation == scheduledGeneration, !Task.isCancelled else { return }
+                        self.preparingAudio = false
+                        self.error = "No se pudo leer \(source.lastPathComponent). \(error.localizedDescription) Prueba el original en Archivos y vuelve a importarlo si está incompleto."
+                        self.updateNowPlaying()
+                    }
+                }
+            } else {
+                song = selected; elapsed = seconds; updateNowPlaying()
+                self.error = "No se pudo reproducir \(source.lastPathComponent): \(error.localizedDescription)"
+            }
         }
     }
     func toggle() { playing ? pause() : resume() }
     func pause() {
+        if preparingAudio { resumeAfterPreparation = false; return }
         guard playing else { return }
         tick(); node.pause(); videoPlayer?.pause(); playing = false; updateNowPlaying()
     }
     func resume() {
+        if preparingAudio { resumeAfterPreparation = true; return }
         guard !playing, !switchingMedia else { return }
         if isVideoMode {
             videoPlayer?.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying(); return

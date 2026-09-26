@@ -7,7 +7,7 @@ struct ArtworkView: View {
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable().scaledToFill() }
-            else { ZStack { Color(.secondarySystemFill); Image(systemName: "waveform").foregroundStyle(.secondary) } }
+            else { ZStack { LinearGradient(colors: [Color.purple.opacity(0.65), PlayerStyle.ink, Color.indigo.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing); Image(systemName: "waveform").font(.system(size: size * 0.22, weight: .ultraLight)).foregroundStyle(.white.opacity(0.55)) } }
         }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size * 0.13))
     }
 }

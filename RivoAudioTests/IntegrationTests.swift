@@ -92,6 +92,68 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(player.elapsed, 1.2, accuracy: 0.15)
         player.pause()
     }
+    @MainActor func testCoordinatedImportWithUnicodeAndReservedCharactersPlays() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("Ácido #100% [Prod. by Artist].wav")
+        try makeTone(at: source)
+        let library = MusicLibrary(documents: directory.appendingPathComponent("Library"), scanOnStart: false)
+        await library.importFiles([source])
+        let imported = try XCTUnwrap(library.songs.first)
+        XCTAssertEqual(imported.id, source.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: library.url(for: imported)), try Data(contentsOf: source))
+        let player = AudioPlayer(); player.library = library
+        player.play(imported, from: [imported])
+        XCTAssertNil(player.error)
+        XCTAssertTrue(player.playing)
+        player.pause()
+        // A symlink alias must produce the same relative ID as its canonical directory.
+        let alias = directory.appendingPathComponent("Alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: library.musicDirectory)
+        XCTAssertEqual(MediaFiles.relativePath(of: alias.appendingPathComponent(imported.id), under: library.musicDirectory), imported.id)
+        XCTAssertNil(MediaFiles.relativePath(of: source, under: library.musicDirectory))
+    }
+    @MainActor func testAACCompatibilityDecodePreservesAudioAndSupportsEQPlayback() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let library = MusicLibrary(documents: directory, scanOnStart: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let wav = library.musicDirectory.appendingPathComponent("original.wav")
+        try makeTone(at: wav)
+        let compressed = library.musicDirectory.appendingPathComponent("compressed.m4a")
+        let exporter = try XCTUnwrap(AVAssetExportSession(asset: AVURLAsset(url: wav), presetName: AVAssetExportPresetAppleM4A))
+        exporter.outputURL = compressed; exporter.outputFileType = .m4a
+        await exporter.export()
+        XCTAssertEqual(exporter.status, .completed)
+        let before = try Data(contentsOf: compressed)
+        let decoded = try await AudioFileLoader.shared.decode(compressed)
+        let file = try AVAudioFile(forReading: decoded)
+        XCTAssertEqual(Double(file.length) / file.processingFormat.sampleRate, 3, accuracy: 0.15)
+        XCTAssertEqual(try Data(contentsOf: compressed), before)
+        let peaks = await WaveformReader.shared.peaks(decoded)
+        XCTAssertEqual(peaks.count, 56)
+        XCTAssertGreaterThan(peaks.max() ?? 0, 0)
+        let player = AudioPlayer()
+        let audio = Song(id: decoded.path, title: "Decoded", artist: "Test", album: "Test", duration: 3)
+        player.setPreset("Graves"); player.play(audio, from: [audio])
+        XCTAssertTrue(player.playing); XCTAssertNil(player.error)
+        player.pause(); player.seek(to: 1)
+        XCTAssertFalse(player.playing); XCTAssertEqual(player.elapsed, 1, accuracy: 0.1)
+    }
+    @MainActor func testEmptyAndMissingFilesHaveActionableErrors() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let library = MusicLibrary(documents: directory, scanOnStart: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let empty = Song(id: "empty.mp3", title: "Empty", artist: "Test", album: "Test", duration: 0)
+        try Data().write(to: library.url(for: empty))
+        let player = AudioPlayer(); player.library = library
+        player.play(empty, from: [empty])
+        XCTAssertFalse(player.playing); XCTAssertFalse(player.preparingAudio)
+        XCTAssertTrue(player.error?.contains("vacío") == true)
+        try FileManager.default.removeItem(at: library.url(for: empty))
+        player.play(empty, from: [empty])
+        XCTAssertNotNil(player.error); XCTAssertFalse(player.playing)
+    }
     private func makeTone(at url: URL) throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         let file = try AVAudioFile(forWriting: url, settings: format.settings)

@@ -39,7 +39,22 @@ struct Song: Identifiable, Codable, Hashable {
         if let data = try? Data(contentsOf: photosURL), let value = try? JSONDecoder().decode([String: String].self, from: data) { artistPhotos = value }
         if let data = try? Data(contentsOf: self.documents.appendingPathComponent("artistPhotoCredits.json")),
            let saved = try? JSONDecoder().decode([String: ArtistPhotoCredit].self, from: data) { photoCredits = saved }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-fixture") {
+            let fixture = Song(id: "Neon.wav", title: "Neon Nights", artist: "Rivo Sessions", album: "Prueba de interfaz", duration: 3)
+            if let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2),
+               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 132300) {
+                buffer.frameLength = 132300
+                for channel in 0..<2 {
+                    for frame in 0..<132300 { buffer.floatChannelData![channel][frame] = Float(sin(Double(frame) * 440 * 2 * .pi / 44100)) * 0.005 }
+                }
+                if let file = try? AVAudioFile(forWriting: url(for: fixture), settings: format.settings) { try? file.write(from: buffer) }
+                songs = [fixture]
+            }
+        } else if scanOnStart { Task { await scan() } }
+        #else
         if scanOnStart { Task { await scan() } }
+        #endif
     }
 
     func url(for song: Song) -> URL { musicDirectory.appendingPathComponent(song.id) }
@@ -65,7 +80,8 @@ struct Song: Identifiable, Codable, Hashable {
         let old = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
         var result: [Song] = []
         for url in urls {
-            let relative = String(url.path.dropFirst(musicDirectory.path.count + 1))
+            guard let relative = MediaFiles.relativePath(of: url, under: musicDirectory),
+                  (try? MediaFiles.validate(url)) != nil else { continue }
             if let existing = old[relative], existing.metadataVerified != nil { result.append(existing); continue }
             let asset = AVURLAsset(url: url)
             let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
@@ -93,7 +109,7 @@ struct Song: Identifiable, Codable, Hashable {
             defer { if access { url.stopAccessingSecurityScopedResource() } }
             guard Self.extensions.contains(url.pathExtension.lowercased()) else { failures += 1; continue }
             let target = uniqueFile(for: url.lastPathComponent)
-            do { try FileManager.default.copyItem(at: url, to: target) } catch { failures += 1 }
+            do { try await MediaFiles.copyForImport(from: url, to: target) } catch { failures += 1 }
         }
         await scan()
         message = failures == 0 ? "Importación terminada" : "No se pudieron copiar \(failures) archivos"
