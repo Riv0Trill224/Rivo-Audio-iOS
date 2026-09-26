@@ -23,6 +23,15 @@ enum OnlineSupport {
         }
         return object
     }
+    static func imageData(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url); request.timeoutInterval = 25
+        request.setValue(agent, forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, data.count < 10_000_000 else {
+            throw ServiceError(message: "No se pudo descargar la fotografía.")
+        }
+        return data
+    }
     static func normalized(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)

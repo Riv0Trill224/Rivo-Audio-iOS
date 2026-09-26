@@ -23,12 +23,50 @@ final class IntegrationTests: XCTestCase {
         let unknown = song("My Song", artist: "Artista desconocido", video: true)
         XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [unknown])))
     }
+    func testSimilarSpellingIsSuggestedButNeedsConfirmation() {
+        let audio = song("Blinding Lights")
+        let video = song("Blinding Ligths Official Video", video: true)
+        let matches = MediaMatcher.candidates(for: audio, in: [video])
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertNil(MediaMatcher.automaticMatch(matches))
+    }
     func testLastFMSignatureAndEncoding() {
         let parameters = ["api_key": "abc", "method": "auth.getSession", "token": "xyz", "format": "json"]
         XCTAssertEqual(LastFMProtocol.signature(parameters, secret: "secret"), "f81f920d21fa903b7fa44ae2857c6bbd")
         XCTAssertEqual(LastFMProtocol.form(["artist": "A+B & C"]), "artist=A%2BB%20%26%20C")
         XCTAssertFalse(LastFMProtocol.accepted(["scrobbles": ["@attr": ["accepted": "0", "ignored": "1"]]]))
         XCTAssertTrue(LastFMProtocol.accepted(["scrobbles": ["@attr": ["accepted": "1", "ignored": "0"]]]))
+    }
+    func testArtistPhotoUsesLinkedIdentityAndRetainsAttribution() async throws {
+        let source = ArtistPhotoSource(jsonRequest: { url in
+            if url.host == "musicbrainz.org", url.path.hasSuffix("/artist/") {
+                return ["artists": [["id": "artist-id", "name": "Example"]]]
+            }
+            if url.host == "musicbrainz.org" {
+                return ["relations": [["type": "wikidata", "url": ["resource": "https://www.wikidata.org/wiki/Q123"]]]]
+            }
+            if url.host == "www.wikidata.org" {
+                return ["entities": ["Q123": ["claims": ["P18": [["rank": "normal", "mainsnak": ["datavalue": ["value": "Example.jpg"]]]]]]]]
+            }
+            return ["query": ["pages": [["imageinfo": [["thumburl": "https://upload.wikimedia.org/example.jpg",
+                "descriptionurl": "https://commons.wikimedia.org/wiki/File:Example.jpg",
+                "extmetadata": ["Artist": ["value": "<b>Photographer</b>"], "LicenseShortName": ["value": "CC BY 4.0"], "LicenseUrl": ["value": "https://creativecommons.org/licenses/by/4.0/"]]]]]]]]
+        }, imageRequest: { url in
+            XCTAssertEqual(url.host, "upload.wikimedia.org")
+            return Data([1, 2, 3])
+        })
+        let (data, credit) = try await source.download(artist: "Example")
+        XCTAssertEqual(data, Data([1, 2, 3]))
+        XCTAssertEqual(credit.author, "Photographer")
+        XCTAssertEqual(credit.license, "CC BY 4.0")
+        XCTAssertEqual(credit.musicBrainzID, "artist-id")
+    }
+    func testAmbiguousArtistDoesNotDownloadAPhoto() async {
+        let source = ArtistPhotoSource(jsonRequest: { _ in
+            ["artists": [["id": "one", "name": "Example"], ["id": "two", "name": "Example"]]]
+        }, imageRequest: { _ in XCTFail("An ambiguous artist must not download a photo"); return Data() })
+        do { _ = try await source.download(artist: "Example"); XCTFail("Expected ambiguous identity error") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("identidad")) }
     }
     @MainActor func testAudioVideoSwitchPreservesPausedPosition() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

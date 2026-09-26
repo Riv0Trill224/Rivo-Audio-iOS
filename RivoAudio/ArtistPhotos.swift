@@ -12,11 +12,17 @@ struct ArtistPhotoCredit: Codable {
 actor ArtistPhotoSource {
     static let shared = ArtistPhotoSource()
     private var nextRequest = Date.distantPast
+    private let jsonRequest: (URL) async throws -> [String: Any]
+    private let imageRequest: (URL) async throws -> Data
+    init(jsonRequest: @escaping (URL) async throws -> [String: Any] = OnlineSupport.json,
+         imageRequest: @escaping (URL) async throws -> Data = OnlineSupport.imageData) {
+        self.jsonRequest = jsonRequest; self.imageRequest = imageRequest
+    }
     private func musicBrainz(_ url: URL) async throws -> [String: Any] {
         let delay = max(0, nextRequest.timeIntervalSinceNow)
         nextRequest = Date().addingTimeInterval(delay + 1.1)
         if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
-        return try await OnlineSupport.json(url)
+        return try await jsonRequest(url)
     }
     func download(artist: String) async throws -> (Data, ArtistPhotoCredit) {
         // The artist is a quoted Lucene term; escape query syntax supplied in tags.
@@ -35,7 +41,7 @@ actor ArtistPhotoSource {
               entity.range(of: #"^Q[0-9]+$"#, options: .regularExpression) != nil else {
             throw ServiceError(message: "El artista no tiene una fotografía vinculada en esta fuente.")
         }
-        let wikidata = try await OnlineSupport.json(OnlineSupport.url("https://www.wikidata.org/w/api.php", ["action": "wbgetentities", "ids": entity, "props": "claims", "format": "json"]))
+        let wikidata = try await jsonRequest(OnlineSupport.url("https://www.wikidata.org/w/api.php", ["action": "wbgetentities", "ids": entity, "props": "claims", "format": "json"]))
         let entities = wikidata["entities"] as? [String: Any]
         let record = entities?[entity] as? [String: Any]
         let claims = record?["claims"] as? [String: Any]
@@ -44,7 +50,7 @@ actor ArtistPhotoSource {
         let snak = claim?["mainsnak"] as? [String: Any]
         let value = snak?["datavalue"] as? [String: Any]
         guard let filename = value?["value"] as? String else { throw ServiceError(message: "No hay foto disponible para este artista.") }
-        let commons = try await OnlineSupport.json(OnlineSupport.url("https://commons.wikimedia.org/w/api.php", ["action": "query", "titles": "File:\(filename)", "prop": "imageinfo", "iiprop": "url|extmetadata", "iiurlwidth": "600", "format": "json", "formatversion": "2"]))
+        let commons = try await jsonRequest(OnlineSupport.url("https://commons.wikimedia.org/w/api.php", ["action": "query", "titles": "File:\(filename)", "prop": "imageinfo", "iiprop": "url|extmetadata", "iiurlwidth": "600", "format": "json", "formatversion": "2"]))
         let query = commons["query"] as? [String: Any]
         let pages = query?["pages"] as? [[String: Any]]
         let info = (pages?.first?["imageinfo"] as? [[String: Any]])?.first
@@ -56,12 +62,7 @@ actor ArtistPhotoSource {
               sourceURL.host == "commons.wikimedia.org", !field("LicenseShortName").isEmpty else {
             throw ServiceError(message: "No se encontró una foto con fuente y licencia identificables.")
         }
-        var request = URLRequest(url: imageURL); request.timeoutInterval = 25
-        request.setValue(OnlineSupport.agent, forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200, data.count < 10_000_000 else {
-            throw ServiceError(message: "No se pudo descargar la fotografía.")
-        }
+        let data = try await imageRequest(imageURL)
         let author = field("Artist").replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
             .replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&quot;", with: "\"")
         return (data, ArtistPhotoCredit(musicBrainzID: id, sourceURL: sourceURL, author: author, license: field("LicenseShortName"), licenseURL: URL(string: field("LicenseUrl"))))
@@ -82,6 +83,7 @@ extension MusicLibrary {
             photoStatus[artist] = "Wikimedia Commons · \(credit.license)"
             photoAttempts[artist] = Date(); savePhotoCredits()
         } catch {
+            if Task.isCancelled { photoStatus[artist] = nil; return }
             photoAttempts[artist] = Date(); photoStatus[artist] = error.localizedDescription
         }
     }

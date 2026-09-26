@@ -18,7 +18,18 @@ enum MediaMatcher {
         if lhs == rhs { return lhs.isEmpty ? 0 : 1 }
         let a = Set(lhs.split(separator: " ")); let b = Set(rhs.split(separator: " "))
         guard !a.isEmpty, !b.isEmpty else { return 0 }
-        return Double(a.intersection(b).count) / Double(a.union(b).count)
+        let tokens = Double(a.intersection(b).count) / Double(a.union(b).count)
+        let left = Array(lhs.prefix(300)), right = Array(rhs.prefix(300))
+        var previous = Array(0...right.count)
+        for (i, character) in left.enumerated() {
+            var row = [i + 1]
+            for (j, other) in right.enumerated() {
+                row.append(min(row[j] + 1, previous[j + 1] + 1, previous[j] + (character == other ? 0 : 1)))
+            }
+            previous = row
+        }
+        let spelling = 1 - Double(previous[right.count]) / Double(max(left.count, right.count))
+        return max(tokens, spelling)
     }
     static func candidates(for song: Song, in library: [Song]) -> [MediaMatch] {
         let sourceTitle = title(song.title)
