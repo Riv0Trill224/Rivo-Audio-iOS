@@ -67,3 +67,7 @@ El primer intento físico rechazó el parámetro `appIdName` con valor `RIVØ Au
 - Reproductor oscuro con carátula amplia, fondo difuminado, controles circulares, acceso a EQ/letras/cola y forma de onda muestreada del audio. La biblioteca abre directamente el reproductor; menú contextual para editar. EQ con controles verticales y presets rápidos.
 - Pruebas nuevas: importación de nombres Unicode y caracteres reservados, rutas con enlaces simbólicos, AAC a PCM y reproducción con EQ, archivos vacíos/ausentes e interfaz del reproductor.
 - Pendiente reproducir el archivo original en el teléfono. El respaldo no añade códecs que iOS no soporte.
+
+### Validación v0.1.3
+
+La ejecución [36222471774](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actions/runs/36222471774) completó compilaciones para simulador y dispositivo, 10 pruebas de audio/lógica y 2 de interfaz, sin fallos. Se revisaron capturas reales del reproductor, biblioteca y EQ. La primera ejecución detectó que el minirreproductor cubría las pestañas; se corrigió y la prueba de navegación pasó. IPA: `RivoAudio-iOS-v0.1.3-unsigned`, artefacto `10898574934`, código `784a6440ed6314f46112192ccd371b9bf86ad96b`. Sigue pendiente validar el archivo original Acid Drip en el iPhone.
