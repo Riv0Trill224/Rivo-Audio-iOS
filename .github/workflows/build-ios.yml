@@ -1,6 +1,8 @@
 name: Build RIVØ Audio iOS
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths: ['RivoAudio/**', 'RivoAudioUITests/**', 'RivoAudioTests/**', 'project.yml', '.github/workflows/build-ios.yml']
@@ -45,9 +47,9 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R DerivedData/Build/Products/Release-iphoneos/RivoAudio.app Payload/
-          zip -qry RivoAudio-iOS-v0.1.3-unsigned.ipa Payload
+          zip -qry RivoAudio-iOS-v0.1.4-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: RivoAudio-iOS-v0.1.3-unsigned
-          path: RivoAudio-iOS-v0.1.3-unsigned.ipa
+          name: RivoAudio-iOS-v0.1.4-unsigned
+          path: RivoAudio-iOS-v0.1.4-unsigned.ipa
           if-no-files-found: error

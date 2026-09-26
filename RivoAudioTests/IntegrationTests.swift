@@ -114,6 +114,24 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(MediaFiles.relativePath(of: alias.appendingPathComponent(imported.id), under: library.musicDirectory), imported.id)
         XCTAssertNil(MediaFiles.relativePath(of: source, under: library.musicDirectory))
     }
+    @MainActor func testFolderImportKeepsSubfoldersAndDoesNotDuplicateOnRescan() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Colección/Artist/Album", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let original = source.appendingPathComponent("Track.wav")
+        try makeTone(at: original)
+        let library = MusicLibrary(documents: root.appendingPathComponent("App"), scanOnStart: false)
+        await library.importFolder(root.appendingPathComponent("Colección"))
+        XCTAssertEqual(library.folders.count, 1)
+        XCTAssertEqual(library.songs.map(\.id), ["Colección/Artist/Album/Track.wav"])
+        let saved = try XCTUnwrap(library.folders.first)
+        await library.rescanFolder(saved)
+        XCTAssertEqual(library.songs.count, 1)
+        await library.removeFolder(saved)
+        XCTAssertTrue(library.songs.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+    }
     @MainActor func testAACCompatibilityDecodePreservesAudioAndSupportsEQPlayback() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let library = MusicLibrary(documents: directory, scanOnStart: false)

@@ -25,11 +25,38 @@ actor ArtistPhotoSource {
         return try await jsonRequest(url)
     }
     func download(artist: String) async throws -> (Data, ArtistPhotoCredit) {
+        if let lastFM = try? await lastFMPhoto(artist: artist) { return lastFM }
+        return try await commonsPhoto(artist: artist)
+    }
+    private func lastFMPhoto(artist: String) async throws -> (Data, ArtistPhotoCredit) {
+        guard let raw = SecureStore.load(),
+              let stored = try JSONSerialization.jsonObject(with: raw) as? [String: String],
+              let key = stored["key"], !key.isEmpty else {
+            throw ServiceError(message: "Configura tu API key de Last.fm para buscar fotos.")
+        }
+        let response = try await jsonRequest(OnlineSupport.url("https://ws.audioscrobbler.com/2.0/",
+            ["method": "artist.getinfo", "artist": artist, "api_key": key, "format": "json", "autocorrect": "1"]))
+        guard let info = response["artist"] as? [String: Any],
+              OnlineSupport.normalized(info["name"] as? String ?? "") == OnlineSupport.normalized(artist),
+              let images = info["image"] as? [[String: Any]],
+              let string = images.reversed().compactMap({ $0["#text"] as? String }).first(where: { !$0.isEmpty }),
+              let photoURL = URL(string: string), photoURL.scheme == "https",
+              let page = info["url"] as? String, let sourceURL = URL(string: page),
+              sourceURL.scheme == "https", sourceURL.host == "www.last.fm" else {
+            throw ServiceError(message: "Last.fm no tiene una foto de este artista.")
+        }
+        let data = try await imageRequest(photoURL)
+        guard UIImage(data: data) != nil else { throw ServiceError(message: "La foto de Last.fm no es válida.") }
+        return (data, ArtistPhotoCredit(musicBrainzID: "", sourceURL: sourceURL,
+                                        author: "Last.fm", license: "Imagen de Last.fm", licenseURL: nil))
+    }
+    private func commonsPhoto(artist: String) async throws -> (Data, ArtistPhotoCredit) {
         // The artist is a quoted Lucene term; escape query syntax supplied in tags.
         let escaped = artist.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let search = try await musicBrainz(OnlineSupport.url("https://musicbrainz.org/ws/2/artist/", ["query": "artist:\"\(escaped)\"", "fmt": "json", "limit": "8"]))
+        let normalized = OnlineSupport.normalized(artist)
         let candidates = (search["artists"] as? [[String: Any]] ?? []).filter {
-            OnlineSupport.normalized($0["name"] as? String ?? "") == OnlineSupport.normalized(artist)
+            OnlineSupport.normalized($0["name"] as? String ?? "") == normalized
         }
         guard candidates.count == 1, let id = candidates.first?["id"] as? String else {
             throw ServiceError(message: "No hay una identidad única para este artista. Revisa su nombre en los metadatos.")
@@ -80,11 +107,11 @@ extension MusicLibrary {
             guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.9) else { throw ServiceError(message: "La imagen no tiene un formato válido.") }
             try setArtistPhoto(jpeg, for: artist)
             photoCredits[artist] = credit
-            photoStatus[artist] = "Wikimedia Commons · \(credit.license)"
+            photoStatus[artist] = credit.license
             photoAttempts[artist] = Date(); savePhotoCredits()
         } catch {
             if Task.isCancelled { photoStatus[artist] = nil; return }
-            photoAttempts[artist] = Date(); photoStatus[artist] = error.localizedDescription
+            photoAttempts[artist] = Date(); photoStatus[artist] = "Sin retrato: \(error.localizedDescription)"
         }
     }
     func savePhotoCredits() {
