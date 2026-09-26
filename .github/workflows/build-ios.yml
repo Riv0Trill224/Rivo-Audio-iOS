@@ -1,0 +1,29 @@
+name: Build RIVØ Audio iOS
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['RivoAudio/**', 'project.yml', '.github/workflows/build-ios.yml']
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Verify simulator build
+        run: xcodebuild -project RivoAudio.xcodeproj -scheme RivoAudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Build unsigned app for SideStore
+        run: xcodebuild -project RivoAudio.xcodeproj -scheme RivoAudio -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath ./DerivedData CODE_SIGNING_ALLOWED=NO build
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R DerivedData/Build/Products/Release-iphoneos/RivoAudio.app Payload/
+          zip -qry RivoAudio-iOS-v0.1.0-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RivoAudio-iOS-v0.1.0-unsigned
+          path: RivoAudio-iOS-v0.1.0-unsigned.ipa
+          if-no-files-found: error
