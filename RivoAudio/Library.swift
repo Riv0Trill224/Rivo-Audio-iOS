@@ -142,8 +142,8 @@ struct MusicFolder: Identifiable, Codable {
                                            targetName: name, bookmark: bookmark))
             }
             await scan()
-            message = "Carpeta importada: \\(count) archivos nuevos o actualizados."
-        } catch { message = "No se pudo importar la carpeta: \\(error.localizedDescription)" }
+            message = "Carpeta importada: \(count) archivos nuevos o actualizados."
+        } catch { message = "No se pudo importar la carpeta: \(error.localizedDescription)" }
     }
 
     func rescanFolder(_ folder: MusicFolder) async {
@@ -160,8 +160,8 @@ struct MusicFolder: Identifiable, Codable {
                 folders[index].bookmark = try source.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
             }
             await scan()
-            message = "Carpeta actualizada: \\(count) archivos nuevos o modificados."
-        } catch { message = "No se pudo actualizar \\(folder.name): \\(error.localizedDescription)" }
+            message = "Carpeta actualizada: \(count) archivos nuevos o modificados."
+        } catch { message = "No se pudo actualizar \(folder.name): \(error.localizedDescription)" }
     }
 
     func removeFolder(_ folder: MusicFolder) async {
@@ -170,8 +170,8 @@ struct MusicFolder: Identifiable, Codable {
             try FileManager.default.removeItem(at: destination)
             folders.removeAll { $0.id == folder.id }
             await scan()
-            message = "Se quitó \\(folder.name) de la biblioteca. La carpeta original sigue en Archivos."
-        } catch { message = "No se pudo quitar la carpeta: \\(error.localizedDescription)" }
+            message = "Se quitó \(folder.name) de la biblioteca. La carpeta original sigue en Archivos."
+        } catch { message = "No se pudo quitar la carpeta: \(error.localizedDescription)" }
     }
 
     private func uniqueFolderName(_ name: String) -> String {
@@ -179,7 +179,7 @@ struct MusicFolder: Identifiable, Codable {
         var candidate = safe
         var suffix = 2
         while FileManager.default.fileExists(atPath: musicDirectory.appendingPathComponent(candidate).path) {
-            candidate = "\\(safe) (\\(suffix))"; suffix += 1
+            candidate = "\(safe) (\(suffix))"; suffix += 1
         }
         return candidate
     }
@@ -207,7 +207,7 @@ struct MusicFolder: Identifiable, Codable {
                 count += 1
             } catch { failures += 1 }
         }
-        if failures > 0 { throw ServiceError(message: "\\(failures) archivos no pudieron copiarse. Revisa que estén descargados en Archivos.") }
+        if failures > 0 { throw ServiceError(message: "\(failures) archivos no pudieron copiarse. Revisa que estén descargados en Archivos.") }
         return count
     }
 

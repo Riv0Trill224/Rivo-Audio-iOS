@@ -179,7 +179,7 @@ struct NowPlayingView: View {
 struct LyricsView: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
-    @Environment(\\.dismiss) private var dismiss
+    @Environment(\.dismiss) private var dismiss
     let songID: String
     @State private var lyrics = ""
     @State private var suggestions: [(title: String, artist: String, lyrics: String)] = []
@@ -227,8 +227,8 @@ struct LyricsView: View {
                                 ContentUnavailableView("Sin letra sincronizada", systemImage: "text.quote")
                             }
                             if let status { Text(status).font(.footnote).foregroundStyle(.white.opacity(0.7)) }
-                            ForEach(Array(suggestions.enumerated()), id: \\.offset) { _, suggestion in
-                                Button("Usar: \\(suggestion.title) — \\(suggestion.artist)") { save(suggestion.lyrics) }
+                            ForEach(Array(suggestions.enumerated()), id: \.offset) { _, suggestion in
+                                Button("Usar: \(suggestion.title) — \(suggestion.artist)") { save(suggestion.lyrics) }
                             }
                         }
                         .padding(.horizontal, 26).padding(.vertical, 32)
@@ -271,6 +271,6 @@ struct LyricsView: View {
             if let match = try await LyricSearch.fetch(song: song) { save(match); return }
             suggestions = try await LyricSearch.suggested(song: song)
             status = suggestions.isEmpty ? "Sin coincidencias. Puedes agregar un archivo .lrc junto a la canción." : "Elige una coincidencia para evitar asignar la letra equivocada."
-        } catch { status = "No se pudo consultar la letra: \\(error.localizedDescription)" }
+        } catch { status = "No se pudo consultar la letra: \(error.localizedDescription)" }
     }
 }
