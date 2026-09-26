@@ -54,3 +54,7 @@ Las pruebas de Last.fm y fotos usan datos de prueba. No demuestran una autorizac
 ### Resultado de validación v0.1.1
 
 La ejecución [36210104860](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actions/runs/36210104860) terminó en verde para `7593405192b4edfbb3b7c6535b081b4503f5e556`: 7 pruebas de integración/lógica y 1 prueba de interfaz, todas sin fallos. Compiló para simulador y dispositivo y generó `RivoAudio-iOS-v0.1.1-unsigned`. La autorización de Last.fm con credenciales reales y las pruebas físicas en el iPhone siguen pendientes.
+
+## v0.1.2 · Corrección de instalación con SideStore
+
+El primer intento físico rechazó el parámetro `appIdName` con valor `RIVØ Audio`. Se cambia `CFBundleDisplayName` a `Rivo Audio` (ASCII), versión 0.1.2, build 3. La identidad visual dentro de la app conserva RIVØ. Pendiente confirmar la instalación en el iPhone con esta IPA.
