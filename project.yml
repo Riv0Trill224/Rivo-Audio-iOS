@@ -20,3 +20,21 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
         IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+  RivoAudioUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [RivoAudioUITests]
+    dependencies:
+      - target: RivoAudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.riv0trill.rivoaudio.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  RivoAudio:
+    build:
+      targets:
+        RivoAudio: all
+    test:
+      targets:
+        - RivoAudioUITests

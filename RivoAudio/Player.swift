@@ -9,8 +9,8 @@ import Combine
     @Published private(set) var elapsed: TimeInterval = 0
     @Published var error: String?
     @Published var presetName = "Plano"
-    @Published var eqEnabled = true { didSet { eq.bypass = !eqEnabled } }
-    @Published var bandCount = 10 { didSet { configureBands() } }
+    @Published var eqEnabled = true { didSet { eq.bypass = !eqEnabled; saveEQ() } }
+    @Published var bandCount = 10 { didSet { configureBands(); saveEQ() } }
     @Published var gains: [Float] = Array(repeating: 0, count: 31)
     @Published var repeatOne = false
     @Published var shuffle = false
@@ -43,6 +43,9 @@ import Combine
     private var playStartedAt: Date?
     private var scrobbled = false
     private var generation = 0
+    private var listenedSeconds: TimeInterval = 0
+    private var lastSamplePosition: TimeInterval?
+    private var restoringEQ = true
     weak var library: MusicLibrary?
     var history: ListeningHistory?
 
@@ -55,6 +58,16 @@ import Combine
             band.gain = 0
             band.bypass = !Self.activeIndices(bandCount).contains(index)
         }
+        if let saved = UserDefaults.standard.array(forKey: "eq.gains") as? [Double], saved.count == 31 {
+            gains = saved.map(Float.init)
+            for index in gains.indices { eq.bands[index].gain = gains[index] }
+        }
+        let count = UserDefaults.standard.integer(forKey: "eq.bands")
+        bandCount = [10, 15, 31].contains(count) ? count : 10
+        if UserDefaults.standard.object(forKey: "eq.enabled") != nil { eqEnabled = UserDefaults.standard.bool(forKey: "eq.enabled") }
+        presetName = UserDefaults.standard.string(forKey: "eq.preset") ?? "Plano"
+        configureBands()
+        restoringEQ = false
         engine.connect(node, to: eq, format: nil)
         engine.connect(eq, to: engine.mainMixerNode, format: nil)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
@@ -74,38 +87,66 @@ import Combine
     func setPreset(_ name: String) {
         guard let values = Self.presets[name] else { return }
         presetName = name
-        for index in 0..<31 { gains[index] = 0; eq.bands[index].gain = 0 }
-        for (position, value) in values.enumerated() {
-            let index = Self.tenBands[position]
+        // Interpolate the ten reference gains in logarithmic frequency space.
+        let reference = Self.tenBands.map { Self.frequencies[$0] }
+        for index in gains.indices {
+            let frequency = Self.frequencies[index]
+            let upper = reference.firstIndex(where: { $0 >= frequency }) ?? 9
+            let lower = max(0, upper - 1)
+            let value: Float
+            if frequency <= reference[0] { value = values[0] }
+            else if frequency >= reference[9] { value = values[9] }
+            else {
+                let fraction = log2(frequency / reference[lower]) / log2(reference[upper] / reference[lower])
+                value = values[lower] + fraction * (values[upper] - values[lower])
+            }
             gains[index] = value; eq.bands[index].gain = value
         }
+        saveEQ()
+    }
+    private func saveEQ() {
+        guard !restoringEQ else { return }
+        UserDefaults.standard.set(gains.map(Double.init), forKey: "eq.gains")
+        UserDefaults.standard.set(bandCount, forKey: "eq.bands")
+        UserDefaults.standard.set(eqEnabled, forKey: "eq.enabled")
+        UserDefaults.standard.set(presetName, forKey: "eq.preset")
     }
     private func configureBands() {
         guard [10, 15, 31].contains(bandCount) else { bandCount = 10; return }
         let active = Self.activeIndices(bandCount)
-        for (index, band) in eq.bands.enumerated() { band.bypass = !active.contains(index) }
+        for (index, band) in eq.bands.enumerated() { band.bypass = !active.contains(index); band.bandwidth = bandCount == 31 ? 1.0 / 3.0 : (bandCount == 15 ? 2.0 / 3.0 : 1.0) }
     }
     func setGain(_ value: Float, band: Int) {
         guard gains.indices.contains(band) else { return }
-        gains[band] = value; eq.bands[band].gain = value; presetName = "Personalizado"
+        gains[band] = value; eq.bands[band].gain = value; presetName = "Personalizado"; saveEQ()
     }
 
     func play(_ selected: Song, from collection: [Song]) {
         queue = collection
-        currentIndex = collection.firstIndex(of: selected) ?? 0
+        currentIndex = collection.firstIndex(where: { $0.id == selected.id }) ?? 0
         open(selected, at: 0)
     }
-    private func open(_ selected: Song, at seconds: TimeInterval) {
+    private func open(_ selected: Song, at seconds: TimeInterval, preservingListen: Bool = false) {
+        if !preservingListen {
+            listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
+        }
+        lastSamplePosition = nil
         generation += 1
         let scheduledGeneration = generation
-        node.stop(); engine.stop()
+        node.stop(); engine.stop(); playing = false; file = nil
         do {
             let audio = try AVAudioFile(forReading: library?.url(for: selected) ?? URL(fileURLWithPath: selected.id))
-            file = audio; song = selected
+            file = audio
+            var loadedSong = selected
+            loadedSong.duration = Double(audio.length) / audio.processingFormat.sampleRate
+            song = loadedSong
             startFrame = max(0, min(audio.length, AVAudioFramePosition(seconds * audio.processingFormat.sampleRate)))
             let remaining = audio.length - startFrame
             guard remaining > 0 else { playing = false; error = "El archivo está vacío o el formato no se puede reproducir"; return }
+            engine.disconnectNodeOutput(node)
+            engine.disconnectNodeOutput(eq)
             engine.connect(node, to: eq, format: audio.processingFormat)
+            engine.connect(eq, to: engine.mainMixerNode, format: audio.processingFormat)
             try AVAudioSession.sharedInstance().setActive(true)
             try engine.start()
             node.scheduleSegment(audio, startingFrame: startFrame, frameCount: AVAudioFrameCount(min(remaining, Int64(UInt32.max))), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
@@ -115,12 +156,11 @@ import Combine
                 }
             }
             elapsed = seconds
-            playStartedAt = Date().addingTimeInterval(-seconds)
-            scrobbled = false
+            lastSamplePosition = seconds
             node.play(); playing = true
             updateNowPlaying()
         } catch {
-            playing = false; self.error = "No se pudo reproducir \(selected.title): \(error.localizedDescription)"
+            playing = false; file = nil; song = nil; updateNowPlaying(); self.error = "No se pudo reproducir \(selected.title): \(error.localizedDescription)"
         }
     }
     func toggle() { playing ? pause() : resume() }
@@ -130,12 +170,18 @@ import Combine
     }
     func resume() {
         guard file != nil, !playing else { return }
-        if !engine.isRunning { try? engine.start() }
-        node.play(); playing = true; updateNowPlaying()
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            if !engine.isRunning { try engine.start() }
+            node.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying()
+        } catch { self.error = error.localizedDescription }
     }
     func seek(to seconds: TimeInterval) {
         guard let song else { return }
-        open(song, at: max(0, min(song.duration - 0.01, seconds)))
+        let wasPlaying = playing
+        if playing { tick() }
+        open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true)
+        if !wasPlaying { pause() }
     }
     func next() {
         guard !queue.isEmpty else { return }
@@ -153,7 +199,9 @@ import Combine
         guard playing, let song, let render = node.lastRenderTime,
               let time = node.playerTime(forNodeTime: render) else { return }
         elapsed = min(song.duration, Double(startFrame + time.sampleTime) / time.sampleRate)
-        if !scrobbled && elapsed >= min(240, max(30, song.duration / 2)) {
+        if let last = lastSamplePosition { listenedSeconds += max(0, elapsed - last) }
+        lastSamplePosition = elapsed
+        if !scrobbled && song.duration > 30 && listenedSeconds >= min(240, song.duration / 2) {
             scrobbled = true
             library?.markPlayed(song)
             history?.record(song, startedAt: playStartedAt ?? Date())

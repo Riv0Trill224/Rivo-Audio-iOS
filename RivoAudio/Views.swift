@@ -162,7 +162,7 @@ struct SongDetailView: View {
                     }
                     Section {
                         Button(song.isVideo ? "Ver video" : "Reproducir") {
-                            if song.isVideo { showVideo = true }
+                            if song.isVideo { player.pause(); showVideo = true }
                             else { player.play(song, from: library.songs.filter { !$0.isVideo }) }
                         }
                         Button("Letras sincronizadas") { showLyrics = true }
@@ -271,7 +271,7 @@ struct EqualizerView: View {
                 ForEach(AudioPlayer.activeIndices(player.bandCount), id: \.self) { index in
                     let frequency = AudioPlayer.frequencies[index]
                     HStack {
-                        Text(frequency >= 1000 ? "\(Int(frequency / 1000))k" : "\(Int(frequency))")
+                        Text(frequency >= 1000 ? String(format: "%gk", frequency / 1000) : "\(Int(frequency))")
                             .frame(width: 35, alignment: .leading).font(.caption.monospacedDigit())
                         Slider(value: Binding(get: { Double(player.gains[index]) }, set: { player.setGain(Float($0), band: index) }), in: -12...12, step: 0.5)
                         Text(String(format: "%+.1f", player.gains[index])).font(.caption.monospacedDigit()).frame(width: 42)
@@ -284,8 +284,11 @@ struct EqualizerView: View {
 }
 
 struct VideoView: View {
-    let url: URL
+    @State private var videoPlayer: AVPlayer
+    init(url: URL) { _videoPlayer = State(initialValue: AVPlayer(url: url)) }
     var body: some View {
-        VideoPlayer(player: AVPlayer(url: url)).ignoresSafeArea()
+        VideoPlayer(player: videoPlayer).ignoresSafeArea()
+            .onAppear { videoPlayer.play() }
+            .onDisappear { videoPlayer.pause() }
     }
 }
