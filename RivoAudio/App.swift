@@ -4,6 +4,8 @@ import SwiftUI
     @StateObject private var library = MusicLibrary()
     @StateObject private var player = AudioPlayer()
     @StateObject private var history = ListeningHistory()
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var lastFM = LastFMClient()
     @StateObject private var ftp = FTPServer()
     var body: some Scene {
         WindowGroup {
@@ -12,8 +14,10 @@ import SwiftUI
                 .environmentObject(player)
                 .environmentObject(history)
                 .environmentObject(ftp)
+                .environmentObject(lastFM)
                 .tint(.pink)
-                .onAppear { player.library = library; player.history = history; ftp.library = library }
+                .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await lastFM.flush() } } }
+                .onAppear { player.library = library; player.history = history; player.lastFM = lastFM; ftp.library = library }
         }
     }
 }

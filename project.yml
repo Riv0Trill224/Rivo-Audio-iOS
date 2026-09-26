@@ -30,6 +30,16 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.riv0trill.rivoaudio.ios.uitests
         GENERATE_INFOPLIST_FILE: YES
+  RivoAudioTests:
+    type: bundle.unit-testing
+    platform: iOS
+    sources: [RivoAudioTests]
+    dependencies:
+      - target: RivoAudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.riv0trill.rivoaudio.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   RivoAudio:
     build:
@@ -38,3 +48,4 @@ schemes:
     test:
       targets:
         - RivoAudioUITests
+        - RivoAudioTests

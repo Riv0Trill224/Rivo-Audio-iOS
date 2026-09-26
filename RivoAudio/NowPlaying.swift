@@ -6,23 +6,42 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showLyrics = false
     @State private var showEQ = false
+    @State private var chooseVideo = false
     @State private var dragProgress: Double?
     var body: some View {
         NavigationStack {
             if let song = player.song {
                 VStack(spacing: 24) {
                     Spacer()
-                    ArtworkView(image: library.image(for: song), size: min(340, UIScreen.main.bounds.width - 50))
-                        .shadow(color: .black.opacity(0.25), radius: 24, y: 15)
+                    if player.isVideoMode, let video = player.videoPlayer {
+                        VideoSurface(player: video).aspectRatio(16 / 9, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                    } else {
+                        ArtworkView(image: library.image(for: song), size: min(300, UIScreen.main.bounds.width - 60))
+                            .shadow(color: .black.opacity(0.25), radius: 24, y: 15)
+                    }
+                    if player.canSwitchToAudio && (!player.videoMatches.isEmpty || player.isVideoMode) {
+                        Picker("Fuente", selection: Binding(get: { player.isVideoMode }, set: { video in
+                            if !video { player.switchToAudio() }
+                            else if let match = MediaMatcher.automaticMatch(player.videoMatches) { Task { await player.switchToVideo(match) } }
+                            else { chooseVideo = true }
+                        })) {
+                            Text("Audio").tag(false)
+                            Text("Video").tag(true)
+                        }.pickerStyle(.segmented).disabled(player.switchingMedia)
+                            .accessibilityIdentifier("mediaSourceSwitch")
+                    }
+                    if player.switchingMedia { ProgressView("Cambiando…") }
+                    if player.isVideoMode { Text("Video local · EQ disponible en modo Audio").font(.caption).foregroundStyle(.secondary) }
                     VStack(spacing: 4) {
                         Text(song.title).font(.title2.bold()).lineLimit(2)
                         Text(song.artist).foregroundStyle(.secondary)
                     }
-                    Slider(value: Binding(get: { dragProgress ?? player.elapsed }, set: { dragProgress = $0 }), in: 0...max(1, song.duration)) { editing in
+                    Slider(value: Binding(get: { dragProgress ?? player.elapsed }, set: { dragProgress = $0 }), in: 0...max(1, player.playbackDuration)) { editing in
                         if !editing, let position = dragProgress { player.seek(to: position); dragProgress = nil }
                     }
                     HStack {
-                        Text(format(player.elapsed)); Spacer(); Text(format(song.duration))
+                        Text(format(player.elapsed)); Spacer(); Text(format(player.playbackDuration))
                     }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     HStack(spacing: 48) {
                         Button { player.previous() } label: { Image(systemName: "backward.end.fill") }
@@ -34,7 +53,7 @@ struct NowPlayingView: View {
                         Spacer()
                         Button { showLyrics = true } label: { Image(systemName: "text.quote") }
                         Spacer()
-                        Button { showEQ = true } label: { Image(systemName: "slider.vertical.3") }
+                        Button { showEQ = true } label: { Image(systemName: "slider.vertical.3") }.disabled(player.isVideoMode)
                         Spacer()
                         Button { player.repeatOne.toggle() } label: { Image(systemName: "repeat.1").foregroundStyle(player.repeatOne ? Color.pink : Color.primary) }
                     }.font(.title3).buttonStyle(.plain)
@@ -44,6 +63,12 @@ struct NowPlayingView: View {
                 .navigationTitle("Reproduciendo")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Cerrar") { dismiss() } } }
+                .confirmationDialog("Elige el video de esta canción", isPresented: $chooseVideo, titleVisibility: .visible) {
+                    ForEach(player.videoMatches) { match in
+                        Button("\(match.song.title) · \(match.song.id)") { Task { await player.switchToVideo(match.song) } }
+                    }
+                    Button("Cancelar", role: .cancel) {}
+                } message: { Text("Las versiones pueden tener introducciones o duraciones distintas. El cambio conserva el segundo de reproducción.") }
                 .sheet(isPresented: $showLyrics) { LyricsView(songID: song.id) }
                 .sheet(isPresented: $showEQ) { NavigationStack { EqualizerView().navigationTitle("Ecualizador") } }
             }

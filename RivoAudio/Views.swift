@@ -46,6 +46,7 @@ struct LibraryView: View {
                     NavigationLink { ArtistView(artist: artist) } label: {
                         HStack {
                             ArtworkView(image: library.artistImage(artist), size: 46)
+                                .task { await library.loadArtistPhoto(artist) }
                             VStack(alignment: .leading) {
                                 Text(artist)
                                 Text("\(library.songs.filter { $0.artist == artist }.count) canciones").font(.caption).foregroundStyle(.secondary)
@@ -58,20 +59,8 @@ struct LibraryView: View {
             NavigationStack { EqualizerView().navigationTitle("Ecualizador") }
                 .tabItem { Label("EQ", systemImage: "slider.vertical.3") }.tag(2)
 
-            NavigationStack {
-                List {
-                    Section("En este dispositivo") {
-                        Text("\(history.entries.count) reproducciones registradas")
-                        ForEach(history.entries.prefix(100)) { item in
-                            VStack(alignment: .leading) {
-                                Text(item.title).font(.headline)
-                                Text("\(item.artist) · \(item.startedAt.formatted())").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    Section { Text("Conexión a Last.fm disponible tras configurar una API key y autorizar tu cuenta. El historial local ya se registra sin conexión.").font(.footnote) }
-                }.navigationTitle("Scrobbling")
-            }.tabItem { Label("Escuchas", systemImage: "chart.bar") }.tag(3)
+            NavigationStack { LastFMView() }
+                .tabItem { Label("Escuchas", systemImage: "chart.bar") }.tag(3)
 
             NavigationStack {
                 Form {
@@ -162,7 +151,7 @@ struct SongDetailView: View {
                     }
                     Section {
                         Button(song.isVideo ? "Ver video" : "Reproducir") {
-                            if song.isVideo { player.pause(); showVideo = true }
+                            if song.isVideo { player.play(song, from: library.songs.filter { !$0.isVideo }); showVideo = true }
                             else { player.play(song, from: library.songs.filter { !$0.isVideo }) }
                         }
                         Button("Letras sincronizadas") { showLyrics = true }
@@ -176,7 +165,7 @@ struct SongDetailView: View {
                 }
                 .sheet(isPresented: $showEditor) { SongEditor(songID: songID) }
                 .sheet(isPresented: $showLyrics) { LyricsView(songID: songID) }
-                .sheet(isPresented: $showVideo) { VideoView(url: library.url(for: song)) }
+                .sheet(isPresented: $showVideo) { NowPlayingView() }
             }
         }.navigationTitle("Canción").navigationBarTitleDisplayMode(.inline)
     }
@@ -219,6 +208,7 @@ struct SongEditor: View {
                     if var value = song {
                         value.title = title; value.artist = artist; value.album = album
                         value.rating = rating; value.chartNote = chartNote
+                        value.metadataVerified = !title.trimmingCharacters(in: .whitespaces).isEmpty && !artist.trimmingCharacters(in: .whitespaces).isEmpty && artist != "Artista desconocido"
                         library.update(value)
                     }
                     dismiss()
@@ -242,16 +232,24 @@ struct ArtistView: View {
         List {
             Section {
                 HStack { Spacer(); ArtworkView(image: library.artistImage(artist), size: 180); Spacer() }
-                PhotoPicker(label: "Elegir foto del artista") { data in try? library.setArtistPhoto(data, for: artist) }
+                if let credit = library.photoCredits[artist] {
+                    Text(credit.author).font(.caption)
+                    Link("Wikimedia Commons · \(credit.license)", destination: credit.sourceURL).font(.caption)
+                    if let license = credit.licenseURL { Link("Licencia", destination: license).font(.caption) }
+                }
+                if let status = library.photoStatus[artist] { Text(status).font(.caption).foregroundStyle(.secondary) }
+                Button("Actualizar foto automáticamente") { Task { await library.loadArtistPhoto(artist, refresh: true) } }
+                    .disabled(library.photoRequests.contains(artist))
             }
             Section("\(songs.count) canciones en tu biblioteca") {
                 ForEach(songs) { song in
                     Button {
-                        if !song.isVideo { player.play(song, from: songs.filter { !$0.isVideo }) }
+                        player.play(song, from: songs.filter { !$0.isVideo })
                     } label: { SongRow(song: song) }.buttonStyle(.plain)
                 }
             }
         }.navigationTitle(artist)
+            .task { await library.loadArtistPhoto(artist) }
     }
 }
 

@@ -14,6 +14,9 @@ final class LaunchTests: XCTestCase {
         add(screenshot)
         app.tabBars.buttons["Transferir"].tap()
         XCTAssertTrue(app.navigationBars["Transferir"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Escuchas"].tap()
+        XCTAssertTrue(app.navigationBars["Scrobbling"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.secureTextFields["API key"].exists)
         app.tabBars.buttons["Canciones"].tap()
         XCTAssertTrue(app.navigationBars["Biblioteca"].exists)
     }

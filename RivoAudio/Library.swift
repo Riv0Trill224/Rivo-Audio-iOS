@@ -15,23 +15,31 @@ struct Song: Identifiable, Codable, Hashable {
     var playCount: Int = 0
     var artworkFile: String? = nil
     var lyrics: String? = nil
+    var metadataVerified: Bool? = nil
 }
 
 @MainActor final class MusicLibrary: ObservableObject {
     @Published private(set) var songs: [Song] = []
     @Published var message: String? = nil
     @Published var artistPhotos: [String: String] = [:]
-    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    @Published var photoCredits: [String: ArtistPhotoCredit] = [:]
+    @Published var photoStatus: [String: String] = [:]
+    var photoRequests: Set<String> = []
+    var photoAttempts: [String: Date] = [:]
+    let documents: URL
     var musicDirectory: URL { documents.appendingPathComponent("Music", isDirectory: true) }
     private var indexURL: URL { documents.appendingPathComponent("library.json") }
     private var photosURL: URL { documents.appendingPathComponent("artistPhotos.json") }
     static let extensions: Set<String> = ["mp3", "m4a", "aac", "alac", "wav", "aif", "aiff", "caf", "flac", "mp4", "m4v", "mov"]
 
-    init() {
+    init(documents: URL? = nil, scanOnStart: Bool = true) {
+        self.documents = documents ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: musicDirectory, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: indexURL), let value = try? JSONDecoder().decode([Song].self, from: data) { songs = value }
         if let data = try? Data(contentsOf: photosURL), let value = try? JSONDecoder().decode([String: String].self, from: data) { artistPhotos = value }
-        Task { await scan() }
+        if let data = try? Data(contentsOf: self.documents.appendingPathComponent("artistPhotoCredits.json")),
+           let saved = try? JSONDecoder().decode([String: ArtistPhotoCredit].self, from: data) { photoCredits = saved }
+        if scanOnStart { Task { await scan() } }
     }
 
     func url(for song: Song) -> URL { musicDirectory.appendingPathComponent(song.id) }
@@ -58,7 +66,7 @@ struct Song: Identifiable, Codable, Hashable {
         var result: [Song] = []
         for url in urls {
             let relative = String(url.path.dropFirst(musicDirectory.path.count + 1))
-            if let existing = old[relative] { result.append(existing); continue }
+            if let existing = old[relative], existing.metadataVerified != nil { result.append(existing); continue }
             let asset = AVURLAsset(url: url)
             let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
             let items = (try? await asset.load(.commonMetadata)) ?? []
@@ -69,7 +77,10 @@ struct Song: Identifiable, Codable, Hashable {
             let parts = name.components(separatedBy: " - ")
             let title = value(.commonKeyTitle) ?? (parts.count >= 2 ? parts.dropFirst().joined(separator: " - ") : name)
             let artist = value(.commonKeyArtist) ?? (parts.count >= 2 ? parts[0] : "Artista desconocido")
-            result.append(Song(id: relative, title: title, artist: artist, album: value(.commonKeyAlbumName) ?? "Sin álbum", duration: duration.isFinite ? duration : 0, isVideo: ["mp4", "m4v", "mov"].contains(url.pathExtension.lowercased())))
+            var imported = Song(id: relative, title: title, artist: artist, album: value(.commonKeyAlbumName) ?? "Sin álbum", duration: duration.isFinite ? duration : 0, isVideo: ["mp4", "m4v", "mov"].contains(url.pathExtension.lowercased()))
+            imported.metadataVerified = value(.commonKeyTitle) != nil && value(.commonKeyArtist) != nil
+            if var existing = old[relative] { existing.metadataVerified = imported.metadataVerified; imported = existing }
+            result.append(imported)
         }
         songs = result.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         save()

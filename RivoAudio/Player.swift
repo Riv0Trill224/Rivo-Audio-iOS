@@ -8,6 +8,20 @@ import Combine
     @Published private(set) var playing = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published var error: String?
+    @Published private(set) var videoPlayer: AVPlayer?
+    @Published private(set) var isVideoMode = false
+    @Published private(set) var switchingMedia = false
+    @Published private(set) var videoDuration: Double = 0
+    private var videoEndObserver: NSObjectProtocol?
+    private var videoFailureObserver: NSKeyValueObservation?
+    private var videoSeeking = false
+    var lastFM: LastFMClient?
+    var playbackDuration: Double { isVideoMode ? videoDuration : (song?.duration ?? 0) }
+    var videoMatches: [MediaMatch] {
+        guard let song, !song.isVideo else { return [] }
+        return MediaMatcher.candidates(for: song, in: library?.songs ?? [])
+    }
+    var canSwitchToAudio: Bool { song?.isVideo == false }
     @Published var presetName = "Plano"
     @Published var eqEnabled = true { didSet { eq.bypass = !eqEnabled; saveEQ() } }
     @Published var bandCount = 10 { didSet { configureBands(); saveEQ() } }
@@ -122,15 +136,80 @@ import Combine
     }
 
     func play(_ selected: Song, from collection: [Song]) {
+        if switchingMedia { generation += 1; switchingMedia = false }
+        let logical = selected.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) ?? selected) : selected
         queue = collection
-        currentIndex = collection.firstIndex(where: { $0.id == selected.id }) ?? 0
-        open(selected, at: 0)
+        if !queue.contains(where: { $0.id == logical.id }) { queue.insert(logical, at: 0) }
+        currentIndex = queue.firstIndex(where: { $0.id == logical.id }) ?? 0
+        if selected.isVideo {
+            pause(); song = logical; elapsed = 0; listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
+            Task { await switchToVideo(selected, startPlaying: true) }
+        } else { open(selected, at: 0) }
+    }
+    func switchToVideo(_ video: Song, startPlaying: Bool? = nil) async {
+        guard video.isVideo, let library, let logical = song, !switchingMedia else { return }
+        let shouldPlay = startPlaying ?? playing
+        if playing { tick() }
+        let position = elapsed
+        generation += 1; let epoch = generation
+        switchingMedia = true
+        node.stop(); engine.stop(); videoPlayer?.pause(); playing = false
+        updateNowPlaying()
+        defer { if generation == epoch { switchingMedia = false } }
+        do {
+            let asset = AVURLAsset(url: library.url(for: video))
+            guard try await asset.load(.isPlayable) else { throw ServiceError(message: "El video no es compatible.") }
+            let duration = CMTimeGetSeconds(try await asset.load(.duration))
+            guard duration.isFinite, duration > 0 else { throw ServiceError(message: "El video no tiene una duración válida.") }
+            let target = min(max(0, position), max(0, duration - 0.05))
+            let item = AVPlayerItem(asset: asset)
+            let candidate = AVPlayer(playerItem: item)
+            let seekSucceeded = await candidate.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            guard generation == epoch else { candidate.pause(); return }
+            guard seekSucceeded else { throw ServiceError(message: "No se pudo posicionar el video.") }
+            if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer) }
+            videoPlayer = candidate; videoDuration = duration; isVideoMode = true; elapsed = target; lastSamplePosition = target
+            videoEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.generation == epoch, self.isVideoMode else { return }
+                    self.tick(); self.next()
+                }
+            }
+            videoFailureObserver = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
+                if observed.status == .failed {
+                    Task { @MainActor in
+                        guard let self, self.generation == epoch else { return }
+                        self.playing = false; self.error = "No se pudo reproducir el video."; self.updateNowPlaying()
+                    }
+                }
+            }
+            try AVAudioSession.sharedInstance().setActive(true)
+            if shouldPlay { candidate.play(); playing = true }
+            if startPlaying == true { lastFM?.nowPlaying(logical) }
+            updateNowPlaying()
+        } catch {
+            guard generation == epoch else { return }
+            if !logical.isVideo { open(logical, at: position, preservingListen: true); if !shouldPlay { pause() } }
+            if logical.isVideo { videoPlayer = nil; isVideoMode = false; song = nil; updateNowPlaying() }
+            self.error = "No se pudo cambiar al video: \(error.localizedDescription)"
+        }
+    }
+    func switchToAudio() {
+        guard isVideoMode, let song, !song.isVideo else { return }
+        let shouldPlay = playing
+        if playing { tick() }
+        let position = elapsed
+        open(song, at: min(position, max(0, song.duration - 0.05)), preservingListen: true)
+        if !shouldPlay { pause() }
     }
     private func open(_ selected: Song, at seconds: TimeInterval, preservingListen: Bool = false) {
         if !preservingListen {
             listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
         }
         lastSamplePosition = nil
+        videoPlayer?.pause(); videoPlayer = nil; isVideoMode = false; switchingMedia = false; videoSeeking = false
+        if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer); videoEndObserver = nil }
+        videoFailureObserver = nil
         generation += 1
         let scheduledGeneration = generation
         node.stop(); engine.stop(); playing = false; file = nil
@@ -158,6 +237,7 @@ import Combine
             elapsed = seconds
             lastSamplePosition = seconds
             node.play(); playing = true
+            if !preservingListen, let song { lastFM?.nowPlaying(song) }
             updateNowPlaying()
         } catch {
             playing = false; file = nil; song = nil; updateNowPlaying(); self.error = "No se pudo reproducir \(selected.title): \(error.localizedDescription)"
@@ -166,10 +246,14 @@ import Combine
     func toggle() { playing ? pause() : resume() }
     func pause() {
         guard playing else { return }
-        tick(); node.pause(); playing = false; updateNowPlaying()
+        tick(); node.pause(); videoPlayer?.pause(); playing = false; updateNowPlaying()
     }
     func resume() {
-        guard file != nil, !playing else { return }
+        guard !playing, !switchingMedia else { return }
+        if isVideoMode {
+            videoPlayer?.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying(); return
+        }
+        guard file != nil else { return }
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             if !engine.isRunning { try engine.start() }
@@ -179,32 +263,56 @@ import Combine
     func seek(to seconds: TimeInterval) {
         guard let song else { return }
         let wasPlaying = playing
+        if isVideoMode, let videoPlayer {
+            if playing { tick() }
+            let position = max(0, min(videoDuration - 0.05, seconds))
+            let epoch = generation
+            videoSeeking = true; videoPlayer.pause()
+            videoPlayer.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] success in
+                Task { @MainActor in
+                    guard let self, self.generation == epoch else { return }
+                    self.videoSeeking = false
+                    if success { self.elapsed = position; self.lastSamplePosition = position }
+                    if wasPlaying { videoPlayer.play() }
+                    self.updateNowPlaying()
+                }
+            }
+            return
+        }
         if playing { tick() }
         open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true)
         if !wasPlaying { pause() }
     }
     func next() {
         guard !queue.isEmpty else { return }
-        if repeatOne, let song { open(song, at: 0); return }
+        if repeatOne, let song { play(song, from: queue); return }
         currentIndex = shuffle ? Int.random(in: queue.indices) : (currentIndex + 1) % queue.count
-        open(queue[currentIndex], at: 0)
+        play(queue[currentIndex], from: queue)
     }
     func previous() {
         guard !queue.isEmpty else { return }
         if elapsed > 3 { seek(to: 0); return }
         currentIndex = (currentIndex - 1 + queue.count) % queue.count
-        open(queue[currentIndex], at: 0)
+        play(queue[currentIndex], from: queue)
     }
     private func tick() {
-        guard playing, let song, let render = node.lastRenderTime,
-              let time = node.playerTime(forNodeTime: render) else { return }
-        elapsed = min(song.duration, Double(startFrame + time.sampleTime) / time.sampleRate)
+        guard playing, !videoSeeking, let song else { return }
+        if isVideoMode {
+            guard let videoPlayer, videoPlayer.timeControlStatus == .playing else { return }
+            let position = CMTimeGetSeconds(videoPlayer.currentTime())
+            guard position.isFinite else { return }
+            elapsed = min(videoDuration, position)
+        } else {
+            guard let render = node.lastRenderTime, let time = node.playerTime(forNodeTime: render) else { return }
+            elapsed = min(song.duration, Double(startFrame + time.sampleTime) / time.sampleRate)
+        }
         if let last = lastSamplePosition { listenedSeconds += max(0, elapsed - last) }
         lastSamplePosition = elapsed
         if !scrobbled && song.duration > 30 && listenedSeconds >= min(240, song.duration / 2) {
             scrobbled = true
             library?.markPlayed(song)
             history?.record(song, startedAt: playStartedAt ?? Date())
+            lastFM?.enqueue(song, startedAt: playStartedAt ?? Date())
         }
         if Int(elapsed) % 3 == 0 { updateNowPlaying() }
     }
@@ -225,7 +333,7 @@ import Combine
         var info: [String: Any] = [MPMediaItemPropertyTitle: song.title,
                                    MPMediaItemPropertyArtist: song.artist,
                                    MPMediaItemPropertyAlbumTitle: song.album,
-                                   MPMediaItemPropertyPlaybackDuration: song.duration,
+                                   MPMediaItemPropertyPlaybackDuration: playbackDuration,
                                    MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
                                    MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0]
         if let image = library?.image(for: song) {
