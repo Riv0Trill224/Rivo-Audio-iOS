@@ -39,7 +39,7 @@ final class IntegrationTests: XCTestCase {
     }
     func testArtistPhotoUsesLinkedIdentityAndRetainsAttribution() async throws {
         let source = ArtistPhotoSource(jsonRequest: { url in
-            if url.host == "musicbrainz.org", url.path.hasSuffix("/artist/") {
+            if url.host == "musicbrainz.org", URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "query" }) == true {
                 return ["artists": [["id": "artist-id", "name": "Example"]]]
             }
             if url.host == "musicbrainz.org" {
