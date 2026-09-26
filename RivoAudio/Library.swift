@@ -52,7 +52,22 @@ struct MusicFolder: Identifiable, Codable {
            let saved = try? JSONDecoder().decode([String: ArtistPhotoCredit].self, from: data) { photoCredits = saved }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-fixture") {
-            let fixture = Song(id: "Neon.wav", title: "Neon Nights", artist: "Rivo Sessions", album: "Prueba de interfaz", duration: 3)
+            let longMetadata = ProcessInfo.processInfo.arguments.contains("--ui-long-metadata")
+            var fixture = Song(id: "Neon.wav",
+                               title: longMetadata ? "Peso [Prod. By ASAP Ty Beats] — Extended title for narrow screens" : "Neon Nights",
+                               artist: longMetadata ? "A$AP Rocky" : "Rivo Sessions",
+                               album: longMetadata ? "LiveLoveA$AP — A very long album name" : "Prueba de interfaz", duration: 3)
+            if longMetadata {
+                let artwork = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 600)).image { context in
+                    UIColor.systemPurple.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 600, height: 600))
+                    UIColor.systemOrange.setFill()
+                    context.fill(CGRect(x: 300, y: 0, width: 300, height: 600))
+                }
+                let name = "layout-fixture.jpg"
+                try? artwork.jpegData(compressionQuality: 0.9)?.write(to: self.documents.appendingPathComponent(name))
+                fixture.artworkFile = name
+            }
             if let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2),
                let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 132300) {
                 buffer.frameLength = 132300

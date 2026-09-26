@@ -1,6 +1,38 @@
 import XCTest
 
 final class LaunchTests: XCTestCase {
+    func testIPhone13LongTitleAndArtworkStayWithinScreen() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-fixture", "--ui-long-metadata"]
+        app.launch()
+        let title = "Peso [Prod. By ASAP Ty Beats] — Extended title for narrow screens"
+        let row = app.buttons.containing(.staticText, identifier: title).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        XCTAssertTrue(app.buttons["Cerrar reproductor"].waitForExistence(timeout: 10))
+        let artwork = app.descendants(matching: .any)["playerArtwork"].firstMatch
+        let loaded = expectation(for: NSPredicate(format: "label == %@", "Carátula del álbum"), evaluatedWith: artwork)
+        wait(for: [loaded], timeout: 10)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "iPhone13-390x844-long-title-with-artwork"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        XCTAssertEqual(app.frame.width, 390, accuracy: 1)
+        XCTAssertEqual(app.frame.height, 844, accuracy: 1)
+        let heading = app.staticTexts["playerTitle"]
+        let artist = app.staticTexts["playerArtist"]
+        let album = app.staticTexts["playerAlbum"]
+        for element in [heading, artist, album, app.buttons["Cerrar reproductor"], app.buttons["Opciones de canción"]] {
+            XCTAssertTrue(element.exists)
+            XCTAssertGreaterThanOrEqual(element.frame.minX, app.frame.minX + 23)
+            XCTAssertLessThanOrEqual(element.frame.maxX, app.frame.maxX - 23)
+        }
+        XCTAssertEqual(heading.frame.minX, artist.frame.minX, accuracy: 1)
+        XCTAssertEqual(heading.frame.minX, album.frame.minX, accuracy: 1)
+    }
+
     func testPlayerLayoutAndControls() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-fixture"]

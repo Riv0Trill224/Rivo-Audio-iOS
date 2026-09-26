@@ -11,12 +11,19 @@ enum PlayerStyle {
 struct PlayerBackdrop: View {
     var image: UIImage? = nil
     var body: some View {
-        ZStack {
-            PlayerStyle.ink
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill().blur(radius: 65).opacity(0.38)
+        // The artwork must never contribute its scaled-to-fill size to the parent layout.
+        GeometryReader { geometry in
+            ZStack {
+                PlayerStyle.ink
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped().blur(radius: 65).opacity(0.38)
+                }
+                LinearGradient(colors: [.purple.opacity(0.30), PlayerStyle.ink.opacity(0.8), PlayerStyle.ink], startPoint: .topTrailing, endPoint: .bottomLeading)
             }
-            LinearGradient(colors: [.purple.opacity(0.30), PlayerStyle.ink.opacity(0.8), PlayerStyle.ink], startPoint: .topTrailing, endPoint: .bottomLeading)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }.ignoresSafeArea().allowsHitTesting(false)
     }
 }

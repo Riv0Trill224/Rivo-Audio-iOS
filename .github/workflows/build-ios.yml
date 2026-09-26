@@ -17,10 +17,11 @@ jobs:
         run: xcodegen generate
       - name: Verify simulator build
         run: xcodebuild -project RivoAudio.xcodeproj -scheme RivoAudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
-      - name: Select simulator
+      - name: Create iPhone 13 simulator (390 x 844 points)
         id: simulator
         run: |
-          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for group in d["devices"].values() for v in group if v["name"].startswith("iPhone")))')
+          RUNTIME_ID=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[v for v in json.load(sys.stdin)["runtimes"] if v.get("isAvailable") and v["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")]; print(sorted(r, key=lambda v: tuple(map(int,v["version"].split("."))))[-1]["identifier"])')
+          SIMULATOR_ID=$(xcrun simctl create "Rivo iPhone 13" com.apple.CoreSimulator.SimDeviceType.iPhone-13 "$RUNTIME_ID")
           echo "id=$SIMULATOR_ID" >> "$GITHUB_OUTPUT"
       - name: Launch and navigation smoke test
         timeout-minutes: 15
@@ -47,9 +48,9 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R DerivedData/Build/Products/Release-iphoneos/RivoAudio.app Payload/
-          zip -qry RivoAudio-iOS-v0.1.4-unsigned.ipa Payload
+          zip -qry RivoAudio-iOS-v0.1.5-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: RivoAudio-iOS-v0.1.4-unsigned
-          path: RivoAudio-iOS-v0.1.4-unsigned.ipa
+          name: RivoAudio-iOS-v0.1.5-unsigned
+          path: RivoAudio-iOS-v0.1.5-unsigned.ipa
           if-no-files-found: error

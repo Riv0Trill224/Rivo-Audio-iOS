@@ -22,7 +22,7 @@ struct NowPlayingView: View {
                         ScrollView(.vertical) {
                             VStack(alignment: .leading, spacing: 14) {
                                 header(song)
-                                media(song, width: min(geometry.size.width - 48, geometry.size.height * 0.34, 380))
+                                media(song, width: max(1, min(geometry.size.width - 48, geometry.size.height * 0.34, 380)))
                                 title(song)
                                 sourceSwitch
                                 options
@@ -32,10 +32,10 @@ struct NowPlayingView: View {
                                     .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
                                     .frame(maxWidth: .infinity)
                                 footer
-                            }.padding(.horizontal, 24).padding(.vertical, 20)
-                                .frame(maxWidth: 500)
-                                .frame(maxWidth: .infinity)
-                                .clipped()
+                            }
+                            .frame(width: max(1, min(geometry.size.width, 500) - 48), alignment: .leading)
+                            .padding(.horizontal, 24).padding(.vertical, 20)
+                            .frame(width: geometry.size.width, alignment: .center)
                         }
                     }
                 } else {
@@ -87,6 +87,9 @@ struct NowPlayingView: View {
                 VideoSurface(player: video).aspectRatio(16 / 9, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 22))
             } else {
                 ArtworkView(image: cover, size: width)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(cover == nil ? "Sin carátula" : "Carátula del álbum")
+                    .accessibilityIdentifier("playerArtwork")
                     .overlay(alignment: .bottomTrailing) {
                         Text(song.id.split(separator: ".").last?.uppercased() ?? "AUDIO")
                             .font(.caption2.bold()).padding(8).background(.ultraThinMaterial, in: Capsule()).padding(14)
@@ -98,8 +101,11 @@ struct NowPlayingView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(song.title).font(.title2.bold()).lineLimit(2).truncationMode(.tail)
+                    .accessibilityIdentifier("playerTitle")
                 Text(song.artist).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.tail)
+                    .accessibilityIdentifier("playerArtist")
                 Text(song.album).font(.caption).foregroundStyle(.white.opacity(0.4)).lineLimit(1).truncationMode(.tail)
+                    .accessibilityIdentifier("playerAlbum")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
