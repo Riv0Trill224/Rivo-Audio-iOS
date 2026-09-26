@@ -6,12 +6,12 @@ Reproductor de música personal para iPhone. La primera versión está diseñada
 
 - Importa música o videos desde **Archivos**, incluida iCloud Drive, y los copia a la biblioteca de la app.
 - Detecta archivos añadidos a `Documents/Music`, muestra canciones y artistas, permite buscar y reproduce audio en segundo plano.
-- EQ de 10, 15 o 31 bandas con controles de ±12 dB, activación y presets.
+- EQ de 10, 15 o 31 bandas con controles de ±12 dB, activación y presets. Los ajustes se conservan al cerrar la app y los presets se adaptan a los tres modos.
 - Permite editar título, artista, álbum, carátula y valoración de 1 a 5 estrellas **dentro de la biblioteca**. Conserva intactos los archivos originales.
 - Abre un perfil por artista con todas sus canciones locales y foto elegida por el usuario.
 - Muestra controles de reproducción y carátula en pantalla bloqueada y Centro de Control.
 - Lee `.lrc` junto al archivo, y permite buscar letras sincronizadas mediante LRCLIB. Si el título no coincide, ofrece candidatos para elegir manualmente; no asigna letras dudosas automáticamente.
-- Lleva un historial local de escuchas después de escuchar al menos la mitad o 4 minutos de una canción (mínimo 30 segundos).
+- Lleva un historial local después de escuchar la mitad o 4 minutos de una canción de más de 30 segundos; adelantar no cuenta como tiempo escuchado.
 - Reproduce videos importados en la pestaña de detalles.
 - Comparte `Documents` con Finder / Apple Devices / iTunes para PC, y recibe archivos por FTP pasivo desde la misma Wi-Fi mientras la app está abierta.
 
@@ -50,3 +50,5 @@ La biblioteca, puntuaciones, fotos, letras e historial se guardan en el disposit
 ## Versión
 
 `0.1.0` · identificador `com.riv0trill.rivoaudio.ios` · iOS 17 o posterior.
+
+Consulta [el estado del desarrollo](docs/ESTADO.md) para conocer las validaciones y funciones pendientes.
