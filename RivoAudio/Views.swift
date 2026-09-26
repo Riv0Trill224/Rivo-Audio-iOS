@@ -56,7 +56,7 @@ struct LibraryView: View {
                     ToolbarItem(placement: .topBarLeading) { Button { Task { await library.scan() } } label: { Image(systemName: "arrow.clockwise") } }
                     ToolbarItem(placement: .topBarTrailing) { Button { showImporter = true } label: { Image(systemName: "plus") } }
                 }
-            }.tabItem { Label("Canciones", systemImage: "music.note") }.tag(0)
+            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Canciones", systemImage: "music.note") }.tag(0)
 
             NavigationStack {
                 List(library.songs.map(\.artist).uniqued().sorted(), id: \.self) { artist in
@@ -71,13 +71,13 @@ struct LibraryView: View {
                         }
                     }
                 }.navigationTitle("Artistas")
-            }.tabItem { Label("Artistas", systemImage: "person.2") }.tag(1)
+            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Artistas", systemImage: "person.2") }.tag(1)
 
             NavigationStack { EqualizerView().navigationTitle("Ecualizador") }
-                .tabItem { Label("EQ", systemImage: "slider.vertical.3") }.tag(2)
+                .safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("EQ", systemImage: "slider.vertical.3") }.tag(2)
 
             NavigationStack { LastFMView() }
-                .tabItem { Label("Escuchas", systemImage: "chart.bar") }.tag(3)
+                .safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Escuchas", systemImage: "chart.bar") }.tag(3)
 
             NavigationStack {
                 Form {
@@ -95,9 +95,21 @@ struct LibraryView: View {
                         Text("En Finder, Apple Devices o iTunes para PC abre Archivos compartidos de RIVØ Audio y copia la música dentro de Documents/Music. Después pulsa actualizar en Biblioteca.").font(.footnote)
                     }
                 }.navigationTitle("Transferir")
-            }.tabItem { Label("Transferir", systemImage: "wifi") }.tag(4)
+            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Transferir", systemImage: "wifi") }.tag(4)
         }
-        .safeAreaInset(edge: .bottom) {
+        .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
+        .sheet(item: $editingSong) { SongEditor(songID: $0.id) }
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): Task { await library.importFiles(urls) }
+            case .failure(let error): library.message = error.localizedDescription
+            }
+        }
+        .alert("RIVØ Audio", isPresented: Binding(get: { library.message != nil || (player.error != nil && !showPlayer) }, set: { if !$0 { library.message = nil; player.error = nil } })) {
+            Button("Aceptar") { library.message = nil; player.error = nil }
+        } message: { Text(library.message ?? player.error ?? "") }
+    }
+    @ViewBuilder private var miniPlayer: some View {
             if let song = player.song {
                 HStack(spacing: 12) {
                     Button { showPlayer = true } label: {
@@ -114,18 +126,6 @@ struct LibraryView: View {
                     Button { player.next() } label: { Image(systemName: "forward.end.fill").frame(width: 36, height: 44) }.buttonStyle(.plain).accessibilityLabel("Siguiente")
                 }.padding(10).background(PlayerStyle.surface, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12)
             }
-        }
-        .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
-        .sheet(item: $editingSong) { SongEditor(songID: $0.id) }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: true) { result in
-            switch result {
-            case .success(let urls): Task { await library.importFiles(urls) }
-            case .failure(let error): library.message = error.localizedDescription
-            }
-        }
-        .alert("RIVØ Audio", isPresented: Binding(get: { library.message != nil || (player.error != nil && !showPlayer) }, set: { if !$0 { library.message = nil; player.error = nil } })) {
-            Button("Aceptar") { library.message = nil; player.error = nil }
-        } message: { Text(library.message ?? player.error ?? "") }
     }
     private func play(_ song: Song) { player.play(song, from: filtered.filter { !$0.isVideo }); showPlayer = true }
 }
