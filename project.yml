@@ -31,7 +31,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.riv0trill.rivoaudio.ios.uitests
         GENERATE_INFOPLIST_FILE: YES
   RivoAudioTests:
-    type: bundle.unit-testing
+    type: bundle.unit-test
     platform: iOS
     sources: [RivoAudioTests]
     dependencies:
