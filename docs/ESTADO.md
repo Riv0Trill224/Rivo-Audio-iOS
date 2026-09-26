@@ -19,7 +19,7 @@ El proyecto iOS ya está cargado en este repositorio. La versión inicial compil
 - Manejo completo de errores y cancelación de transferencias FTP.
 - Presets personales con nombre y editor de carátulas con guardado/cancelación coherentes.
 - Artistas múltiples y mejoras de coincidencias de letras.
-- Conexión real a Last.fm: actualmente solo existe historial local.
+- Validación con una cuenta real de Last.fm: la conexión ya está implementada en v0.1.1; falta introducir las credenciales y autorizar la cuenta.
 - Fuente externa de rankings: actualmente hay estrellas personales y un campo manual.
 - Metadatos embebidos: actualmente se edita el catálogo de la app, no el archivo musical.
 
@@ -35,3 +35,18 @@ La ejecución [36207444049](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actio
 - IPA sin firma: generada como artefacto `RivoAudio-iOS-v0.1.0-unsigned`.
 
 Esta prueba no reproduce un archivo de audio ni valida una transferencia: ambas comprobaciones siguen pendientes en el dispositivo.
+
+
+## v0.1.1 · Fotos automáticas, Last.fm y Audio/Video
+
+- **Fotos:** búsqueda de identidad exacta en MusicBrainz, relación Wikidata y fotografía de Wikimedia Commons. La app conserva imagen, autor, licencia y enlace de procedencia. Se busca al mostrar el artista; si no existe una identidad única o una foto con licencia identificada, se informa en el perfil. Hay actualización manual de la búsqueda automática.
+- **Last.fm:** configuración de API key y shared secret en la app, autorización en el navegador y sesión en Keychain. Incluye Now Playing, scrobbles por tiempo escuchado, cola persistente, reconexión y visualización de rechazos. No se suben credenciales al repositorio. Los títulos/artistas derivados de nombres de archivo requieren confirmación en el editor antes de enviarse.
+- **Audio/Video:** busca archivos complementarios en la biblioteca. Usa título normalizado, artista, duración, nombre de archivo y similitud de escritura. Distingue versiones live/remix/acoustic. Un único par de alta confianza habilita el cambio directo; los casos dudosos muestran candidatos.
+- El cambio conserva el segundo de reproducción y el estado de pausa. Conserva el registro de escucha de la canción para no duplicarlo al cambiar de fuente. Una introducción distinta en el videoclip puede requerir ajustar la posición manualmente.
+- El video usa AVPlayer; el EQ de AVAudioEngine se aplica al modo Audio. No se descargan videos de servicios externos.
+
+### Pruebas añadidas
+
+Firma y codificación de solicitudes de Last.fm; interpretación de aceptados/rechazados; coincidencias correctas, ambiguas y con errores de escritura; atribución de fotos e identidad ambigua con respuestas simuladas; cambio real entre un WAV y un MOV generados para la prueba, conservando posición y pausa; navegación hasta la configuración de Last.fm.
+
+Las pruebas de Last.fm y fotos usan datos de prueba. No demuestran una autorización ni envío real de scrobbles con la cuenta del usuario, ni disponibilidad de una foto para cada artista.
