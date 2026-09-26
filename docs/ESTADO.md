@@ -50,3 +50,7 @@ Esta prueba no reproduce un archivo de audio ni valida una transferencia: ambas 
 Firma y codificación de solicitudes de Last.fm; interpretación de aceptados/rechazados; coincidencias correctas, ambiguas y con errores de escritura; atribución de fotos e identidad ambigua con respuestas simuladas; cambio real entre un WAV y un MOV generados para la prueba, conservando posición y pausa; navegación hasta la configuración de Last.fm.
 
 Las pruebas de Last.fm y fotos usan datos de prueba. No demuestran una autorización ni envío real de scrobbles con la cuenta del usuario, ni disponibilidad de una foto para cada artista.
+
+### Resultado de validación v0.1.1
+
+La ejecución [36210104860](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actions/runs/36210104860) terminó en verde para `7593405192b4edfbb3b7c6535b081b4503f5e556`: 7 pruebas de integración/lógica y 1 prueba de interfaz, todas sin fallos. Compiló para simulador y dispositivo y generó `RivoAudio-iOS-v0.1.1-unsigned`. La autorización de Last.fm con credenciales reales y las pruebas físicas en el iPhone siguen pendientes.
