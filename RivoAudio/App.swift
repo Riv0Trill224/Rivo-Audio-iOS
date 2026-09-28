@@ -17,7 +17,10 @@ import SwiftUI
                 .environmentObject(lastFM)
                 .tint(PlayerStyle.accent)
                 .preferredColorScheme(.dark)
-                .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await lastFM.flush() } } }
+                .onChange(of: scenePhase) { _, phase in
+                    player.setInterfaceActive(phase == .active)
+                    if phase == .active { Task { await lastFM.flush() } }
+                }
                 .onAppear { player.library = library; player.history = history; player.lastFM = lastFM; ftp.library = library }
         }
     }

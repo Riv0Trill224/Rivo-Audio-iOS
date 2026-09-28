@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import UIKit
 import Combine
+import ImageIO
 
 struct Song: Identifiable, Codable, Hashable {
     var id: String // Relative path under Documents/Music; stable across launches.
@@ -40,6 +41,9 @@ struct MusicFolder: Identifiable, Codable {
     private var indexURL: URL { documents.appendingPathComponent("library.json") }
     private var foldersURL: URL { documents.appendingPathComponent("musicFolders.json") }
     private var photosURL: URL { documents.appendingPathComponent("artistPhotos.json") }
+    private var photoAttemptsURL: URL { documents.appendingPathComponent("artistPhotoAttempts.json") }
+    private let artworkCache = NSCache<NSString, UIImage>()
+    private var missingArtwork = Set<String>()
     static let extensions: Set<String> = ["mp3", "m4a", "aac", "alac", "wav", "aif", "aiff", "caf", "flac", "mp4", "m4v", "mov"]
 
     init(documents: URL? = nil, scanOnStart: Bool = true) {
@@ -50,6 +54,9 @@ struct MusicFolder: Identifiable, Codable {
         if let data = try? Data(contentsOf: photosURL), let value = try? JSONDecoder().decode([String: String].self, from: data) { artistPhotos = value }
         if let data = try? Data(contentsOf: self.documents.appendingPathComponent("artistPhotoCredits.json")),
            let saved = try? JSONDecoder().decode([String: ArtistPhotoCredit].self, from: data) { photoCredits = saved }
+        if let data = try? Data(contentsOf: photoAttemptsURL),
+           let saved = try? JSONDecoder().decode([String: Date].self, from: data) { photoAttempts = saved }
+        artworkCache.totalCostLimit = 24 * 1024 * 1024
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-fixture") {
             let longMetadata = ProcessInfo.processInfo.arguments.contains("--ui-long-metadata")
@@ -77,9 +84,9 @@ struct MusicFolder: Identifiable, Codable {
                 if let file = try? AVAudioFile(forWriting: url(for: fixture), settings: format.settings) { try? file.write(from: buffer) }
                 songs = [fixture]
             }
-        } else if scanOnStart { Task { await scan() } }
+        } else if scanOnStart && !FileManager.default.fileExists(atPath: indexURL.path) { Task { await scan() } }
         #else
-        if scanOnStart { Task { await scan() } }
+        if scanOnStart && !FileManager.default.fileExists(atPath: indexURL.path) { Task { await scan() } }
         #endif
     }
 
@@ -88,6 +95,9 @@ struct MusicFolder: Identifiable, Codable {
         if let data = try? JSONEncoder().encode(songs) { try? data.write(to: indexURL, options: .atomic) }
         if let data = try? JSONEncoder().encode(folders) { try? data.write(to: foldersURL, options: .atomic) }
         if let data = try? JSONEncoder().encode(artistPhotos) { try? data.write(to: photosURL, options: .atomic) }
+    }
+    func savePhotoAttempts() {
+        if let data = try? JSONEncoder().encode(photoAttempts) { try? data.write(to: photoAttemptsURL, options: .atomic) }
     }
     func update(_ song: Song) {
         guard let i = songs.firstIndex(where: { $0.id == song.id }) else { return }
@@ -125,6 +135,7 @@ struct MusicFolder: Identifiable, Codable {
             if var existing = old[relative] { existing.metadataVerified = imported.metadataVerified; imported = existing }
             result.append(imported)
         }
+        missingArtwork.removeAll()
         songs = result.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         save()
     }
@@ -242,22 +253,48 @@ struct MusicFolder: Identifiable, Codable {
     func setArtwork(_ imageData: Data, for song: Song) throws {
         let file = "art-\(UUID().uuidString).jpg"
         try imageData.write(to: documents.appendingPathComponent(file), options: .atomic)
+        artworkCache.removeObject(forKey: "song:\(song.id)" as NSString)
+        missingArtwork.remove("song:\(song.id)")
         var copy = song; copy.artworkFile = file; update(copy)
     }
     func setArtistPhoto(_ imageData: Data, for artist: String) throws {
         let file = "artist-\(UUID().uuidString).jpg"
         try imageData.write(to: documents.appendingPathComponent(file), options: .atomic)
+        artworkCache.removeObject(forKey: "artist:\(artist)" as NSString)
+        missingArtwork.remove("artist:\(artist)")
         artistPhotos[artist] = file; save()
     }
     func image(for song: Song) -> UIImage? {
-        if let file = song.artworkFile, let image = UIImage(contentsOfFile: documents.appendingPathComponent(file).path) { return image }
-        let asset = AVURLAsset(url: url(for: song))
-        guard let item = asset.commonMetadata.first(where: { $0.commonKey?.rawValue == AVMetadataKey.commonKeyArtwork.rawValue }), let data = item.dataValue else { return nil }
-        return UIImage(data: data)
+        let key = "song:\(song.id)" as NSString
+        if let image = artworkCache.object(forKey: key) { return image }
+        if missingArtwork.contains(key as String) { return nil }
+        let data: Data?
+        if let file = song.artworkFile { data = try? Data(contentsOf: documents.appendingPathComponent(file)) }
+        else {
+            let asset = AVURLAsset(url: url(for: song))
+            data = asset.commonMetadata.first(where: { $0.commonKey?.rawValue == AVMetadataKey.commonKeyArtwork.rawValue })?.dataValue
+        }
+        guard let data, let image = Self.thumbnail(data) else { missingArtwork.insert(key as String); return nil }
+        artworkCache.setObject(image, forKey: key, cost: Int(image.size.width * image.size.height * 4))
+        return image
     }
     func artistImage(_ artist: String) -> UIImage? {
         guard let file = artistPhotos[artist] else { return nil }
-        return UIImage(contentsOfFile: documents.appendingPathComponent(file).path)
+        let key = "artist:\(artist)" as NSString
+        if let image = artworkCache.object(forKey: key) { return image }
+        guard let data = try? Data(contentsOf: documents.appendingPathComponent(file)),
+              let image = Self.thumbnail(data) else { return nil }
+        artworkCache.setObject(image, forKey: key, cost: Int(image.size.width * image.size.height * 4))
+        return image
+    }
+    static func thumbnail(_ data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: 900
+              ] as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
     func localLyrics(for song: Song) -> String? {
         if let lyrics = song.lyrics, !lyrics.isEmpty { return lyrics }
