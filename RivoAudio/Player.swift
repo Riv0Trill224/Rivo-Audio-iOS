@@ -375,7 +375,7 @@ import Combine
             guard let render = node.lastRenderTime, let time = node.playerTime(forNodeTime: render) else { return }
             elapsed = min(song.duration, Double(startFrame + time.sampleTime) / time.sampleRate)
         }
-        if let last = lastSamplePosition { listenedSeconds += max(0, elapsed - last) }
+        if let last = lastSamplePosition { listenedSeconds += max(0, elapsed - last) / Double(playbackRate) }
         lastSamplePosition = elapsed
         if !scrobbled && song.duration > 30 && listenedSeconds >= min(240, song.duration / 2) {
             scrobbled = true

@@ -52,13 +52,13 @@ extension MusicLibrary {
     }
     func autoLyrics(for song: Song) async {
         guard UserDefaults.standard.object(forKey: "lyrics.auto") == nil || UserDefaults.standard.bool(forKey: "lyrics.auto"),
-              localLyrics(for: song)?.isEmpty != false, song.lyrics != "" else { return }
+              lyricFile(for: song) == nil, localLyrics(for: song)?.isEmpty != false, song.lyrics != "" else { return }
         let key = "lyrics.attempt." + song.id
         if let date = UserDefaults.standard.object(forKey: key) as? Date, Date().timeIntervalSince(date) < 86400 { return }
         UserDefaults.standard.set(Date(), forKey: key)
         do {
             if let result = try await LyricSearch.fetch(song: song), !Task.isCancelled,
-               let current = songs.first(where: { $0.id == song.id }), current.lyrics != "", localLyrics(for: current)?.isEmpty != false {
+               let current = songs.first(where: { $0.id == song.id }), current.lyrics != "", lyricFile(for: current) == nil, localLyrics(for: current)?.isEmpty != false {
                 try saveLyrics(result, for: current, source: "LRCLIB · automática")
             }
         } catch { /* Retry only on a later day or an explicit manual search. */ }

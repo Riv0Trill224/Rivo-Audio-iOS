@@ -44,10 +44,12 @@ enum LyricSearch {
         components.queryItems = [URLQueryItem(name: "track_name", value: song.title), URLQueryItem(name: "artist_name", value: song.artist)]
         var request = URLRequest(url: components.url!, timeoutInterval: 15)
         request.setValue("RivoAudio-iOS/0.1 (personal local player)", forHTTPHeaderField: "User-Agent")
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         let candidates = try JSONDecoder().decode([LyricResult].self, from: data)
         let normalizedTitle = normalize(song.title)
         let normalizedArtist = normalize(song.artist)
+        guard !normalizedTitle.isEmpty, !normalizedArtist.isEmpty, normalizedArtist != "artista desconocido" else { return nil }
         let matches = candidates.filter { candidate in
             normalize(candidate.trackName) == normalizedTitle && normalize(candidate.artistName) == normalizedArtist && candidate.syncedLyrics?.isEmpty == false
         }
@@ -60,7 +62,8 @@ enum LyricSearch {
         components.queryItems = [URLQueryItem(name: "q", value: song.title)]
         var request = URLRequest(url: components.url!, timeoutInterval: 15)
         request.setValue("RivoAudio-iOS/0.1 (personal local player)", forHTTPHeaderField: "User-Agent")
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         let results = try JSONDecoder().decode([LyricResult].self, from: data)
         return results.compactMap { candidate in
             guard let lyrics = candidate.syncedLyrics else { return nil }

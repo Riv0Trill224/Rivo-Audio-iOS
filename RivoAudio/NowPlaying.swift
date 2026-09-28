@@ -266,6 +266,7 @@ struct LyricsView: View {
             }
             .tint(PlayerStyle.accent)
             .preferredColorScheme(.dark)
+            .onChange(of: library.songs) { _, _ in if let song { lyrics = library.localLyrics(for: song) ?? ""; lines = LRC.parse(lyrics) } }
             .onAppear {
                 if let song { lyrics = library.localLyrics(for: song) ?? ""; lines = LRC.parse(lyrics); cover = library.image(for: song) }
             }

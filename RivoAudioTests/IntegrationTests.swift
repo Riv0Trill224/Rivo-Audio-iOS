@@ -207,3 +207,27 @@ final class IntegrationTests: XCTestCase {
         guard writer.status == .completed else { throw writer.error ?? ServiceError(message: "Cannot finish video") }
     }
 }
+
+final class LyricsPersistenceTests: XCTestCase {
+    @MainActor func testMigrationRenameAndDeleteSurviveReload() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Music"), withIntermediateDirectories: true)
+        var song = Song(id: "track.wav", title: "Before", artist: "Example", album: "Test", duration: 180)
+        song.lyrics = "[00:01.00]Hello"
+        try JSONEncoder().encode([song]).write(to: dir.appendingPathComponent("library.json"))
+        let library = MusicLibrary(documents: dir, scanOnStart: false)
+        library.migrateLyrics()
+        XCTAssertEqual(library.localLyrics(for: library.songs[0]), "[00:01.00]Hello")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(library.lyricFile(for: song)).path))
+        var renamed = library.songs[0]; renamed.title = "After"; library.update(renamed)
+        let reloaded = MusicLibrary(documents: dir, scanOnStart: false)
+        XCTAssertEqual(reloaded.localLyrics(for: reloaded.songs[0]), "[00:01.00]Hello")
+        try "[00:01]Legacy".write(to: dir.appendingPathComponent("Music/track.lrc"), atomically: true, encoding: .utf8)
+        try reloaded.deleteLyrics(for: reloaded.songs[0])
+        let deleted = MusicLibrary(documents: dir, scanOnStart: false)
+        deleted.migrateLyrics()
+        XCTAssertNil(deleted.localLyrics(for: deleted.songs[0]))
+        XCTAssertNil(deleted.lyricFile(for: deleted.songs[0]))
+    }
+}
