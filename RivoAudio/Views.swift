@@ -65,7 +65,6 @@ struct LibraryView: View {
                     NavigationLink { ArtistView(artist: artist) } label: {
                         HStack {
                             ArtworkView(image: library.artistImage(artist) ?? library.songs.first(where: { $0.artist == artist }).flatMap { library.image(for: $0) }, size: 46)
-                                .task { await library.loadArtistPhoto(artist) }
                             VStack(alignment: .leading) {
                                 Text(artist)
                                 Text("\(library.songs.filter { $0.artist == artist }.count) canciones").font(.caption).foregroundStyle(.secondary)

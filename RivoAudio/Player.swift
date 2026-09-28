@@ -60,6 +60,8 @@ import Combine
     var queuedSongs: [Song] { queue }
     private var currentIndex = 0
     private var timer: Timer?
+    private var interfaceActive = true
+    private var lastNowPlayingUpdate: TimeInterval = -1
     private var playStartedAt: Date?
     private var scrobbled = false
     private var generation = 0
@@ -93,15 +95,28 @@ import Combine
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
         setupCommands()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notice in
             if let raw = notice.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                raw == AVAudioSession.InterruptionType.began.rawValue {
                 Task { @MainActor in self?.pause() }
             }
         }
+    }
+
+    func setInterfaceActive(_ active: Bool) {
+        interfaceActive = active
+        if active { tick() }
+        scheduleProgressTimer()
+    }
+    private func scheduleProgressTimer() {
+        timer?.invalidate(); timer = nil
+        guard playing else { return }
+        // Playback is driven by AVAudioEngine/AVPlayer, never by this UI timer.
+        let interval = interfaceActive ? 0.5 : 10.0
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        timer?.tolerance = interfaceActive ? 0.1 : 2.0
     }
 
     func setPreset(_ name: String) {
@@ -192,6 +207,7 @@ import Combine
             }
             try AVAudioSession.sharedInstance().setActive(true)
             if shouldPlay { candidate.play(); playing = true }
+            scheduleProgressTimer()
             if startPlaying == true { lastFM?.nowPlaying(logical) }
             updateNowPlaying()
         } catch {
@@ -252,10 +268,11 @@ import Combine
             elapsed = seconds
             lastSamplePosition = seconds
             if startPlaying { node.play(); playing = true }
+            scheduleProgressTimer()
             if !preservingListen, let song { lastFM?.nowPlaying(song) }
             updateNowPlaying()
         } catch {
-            playing = false; file = nil
+            playing = false; file = nil; scheduleProgressTimer()
             if openingFile, preparedURL == nil, (try? MediaFiles.validate(source)) != nil {
                 song = selected; elapsed = seconds; preparingAudio = true; resumeAfterPreparation = startPlaying
                 updateNowPlaying()
@@ -283,19 +300,19 @@ import Combine
     func pause() {
         if preparingAudio { resumeAfterPreparation = false; return }
         guard playing else { return }
-        tick(); node.pause(); videoPlayer?.pause(); playing = false; updateNowPlaying()
+        tick(); node.pause(); videoPlayer?.pause(); playing = false; scheduleProgressTimer(); updateNowPlaying()
     }
     func resume() {
         if preparingAudio { resumeAfterPreparation = true; return }
         guard !playing, !switchingMedia else { return }
         if isVideoMode {
-            videoPlayer?.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying(); return
+            videoPlayer?.play(); playing = true; lastSamplePosition = elapsed; scheduleProgressTimer(); updateNowPlaying(); return
         }
         guard file != nil else { return }
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             if !engine.isRunning { try engine.start() }
-            node.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying()
+            node.play(); playing = true; lastSamplePosition = elapsed; scheduleProgressTimer(); updateNowPlaying()
         } catch { self.error = error.localizedDescription }
     }
     func seek(to seconds: TimeInterval) {
@@ -352,7 +369,7 @@ import Combine
             history?.record(song, startedAt: playStartedAt ?? Date())
             lastFM?.enqueue(song, startedAt: playStartedAt ?? Date())
         }
-        if Int(elapsed) % 3 == 0 { updateNowPlaying() }
+        if interfaceActive && elapsed - lastNowPlayingUpdate >= 3 { updateNowPlaying() }
     }
     private func setupCommands() {
         let controls = MPRemoteCommandCenter.shared()
@@ -368,6 +385,7 @@ import Combine
     }
     private func updateNowPlaying() {
         guard let song else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
+        lastNowPlayingUpdate = elapsed
         var info: [String: Any] = [MPMediaItemPropertyTitle: song.title,
                                    MPMediaItemPropertyArtist: song.artist,
                                    MPMediaItemPropertyAlbumTitle: song.album,
