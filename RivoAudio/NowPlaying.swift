@@ -5,6 +5,7 @@ struct NowPlayingView: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
     @Environment(\.dismiss) private var dismiss
+    @State private var showSettings = false
     @State private var showLyrics = false
     @State private var showEQ = false
     @State private var showEditor = false
@@ -56,6 +57,7 @@ struct NowPlayingView: View {
                     Button("\(match.song.title) · \(match.song.id)") { Task { await player.switchToVideo(match.song) } }
                 }
             } message: { Text("El cambio conserva la posición. Las versiones pueden tener introducciones diferentes.") }
+            .sheet(isPresented: $showSettings) { NavigationStack { RivoSettingsView().toolbar { Button("Cerrar") { showSettings = false } } } }
             .sheet(isPresented: $showLyrics) { if let song = player.song { LyricsView(songID: song.id) } }
             .sheet(isPresented: $showEQ) { NavigationStack { EqualizerView().navigationTitle("Ecualizador").toolbar { Button("Cerrar") { showEQ = false } } } }
             .sheet(isPresented: $showEditor) { if let song = player.song { SongEditor(songID: song.id) } }
@@ -75,6 +77,7 @@ struct NowPlayingView: View {
             }
             Spacer()
             Menu {
+                Button("Ajustes visuales y de audio") { showSettings = true }
                 Button("Editar información y carátula") { showEditor = true }
                 Button("Letras sincronizadas") { showLyrics = true }
                 Button("Ver cola") { showQueue = true }
@@ -193,7 +196,9 @@ struct LyricsView: View {
     @State private var status: String?
     @State private var cover: UIImage?
     private var song: Song? { library.songs.first { $0.id == songID } }
-    private var lines: [LyricLine] { LRC.parse(lyrics) }
+    @AppStorage("visual.lyricSize") private var lyricSize = 30.0
+    @AppStorage("visual.motion") private var motion = true
+    @State private var lines: [LyricLine] = []
     private var activeID: Int? {
         guard player.song?.id == songID else { return nil }
         return lines.last(where: { $0.time <= player.elapsed })?.id
@@ -211,7 +216,7 @@ struct LyricsView: View {
                                         if player.song?.id == songID { player.seek(to: line.time) }
                                     } label: {
                                         Text(line.text.isEmpty ? "♪" : line.text)
-                                            .font(.system(size: 32, weight: line.id == activeID ? .bold : .semibold, design: .rounded))
+                                            .font(.system(size: lyricSize, weight: line.id == activeID ? .bold : .semibold, design: .rounded))
                                             .foregroundStyle(.white.opacity(line.id == activeID ? 1 : 0.42))
                                             .multilineTextAlignment(.leading)
                                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -223,7 +228,7 @@ struct LyricsView: View {
                                 }
                             } else if !lyrics.isEmpty {
                                 Text(lyrics)
-                                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                                    .font(.system(size: lyricSize, weight: .semibold, design: .rounded))
                                     .foregroundStyle(.white)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -243,9 +248,10 @@ struct LyricsView: View {
                     }
                     .onChange(of: activeID) { _, id in
                         guard let id else { return }
-                        withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .center) }
+                        withAnimation(motion ? .easeInOut(duration: 0.35) : nil) { proxy.scrollTo(id, anchor: .center) }
                     }
-                    .onChange(of: lyrics) { _, _ in
+                    .onChange(of: lyrics) { _, value in
+                        lines = LRC.parse(value)
                         if let id = activeID { proxy.scrollTo(id, anchor: .center) }
                     }
                 }
@@ -261,13 +267,14 @@ struct LyricsView: View {
             .tint(PlayerStyle.accent)
             .preferredColorScheme(.dark)
             .onAppear {
-                if let song { lyrics = library.localLyrics(for: song) ?? ""; cover = library.image(for: song) }
+                if let song { lyrics = library.localLyrics(for: song) ?? ""; lines = LRC.parse(lyrics); cover = library.image(for: song) }
             }
         }
     }
     private func save(_ value: String) {
-        guard var song else { return }
-        song.lyrics = value; library.update(song); lyrics = value
+        guard let song else { return }
+        do { try library.saveLyrics(value, for: song, source: "LRCLIB · selección manual"); lyrics = value }
+        catch { status = error.localizedDescription; return }
         suggestions = []; status = "Letra guardada en tu biblioteca"
     }
     private func lookup() async {

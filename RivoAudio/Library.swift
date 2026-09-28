@@ -297,7 +297,8 @@ struct MusicFolder: Identifiable, Codable {
         return UIImage(cgImage: cgImage)
     }
     func localLyrics(for song: Song) -> String? {
-        if let lyrics = song.lyrics, !lyrics.isEmpty { return lyrics }
+        if let file = lyricFile(for: song), let text = try? String(contentsOf: file, encoding: .utf8) { return text }
+        if let lyrics = song.lyrics { return lyrics.isEmpty ? nil : lyrics }
         let lrc = url(for: song).deletingPathExtension().appendingPathExtension("lrc")
         return try? String(contentsOf: lrc, encoding: .utf8)
     }

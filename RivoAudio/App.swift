@@ -21,6 +21,7 @@ import SwiftUI
                     player.setInterfaceActive(phase == .active)
                     if phase == .active { Task { await lastFM.flush() } }
                 }
+                .task { library.migrateLyrics() }
                 .onAppear { player.library = library; player.history = history; player.lastFM = lastFM; ftp.library = library }
         }
     }

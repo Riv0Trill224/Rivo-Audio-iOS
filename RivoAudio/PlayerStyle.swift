@@ -9,13 +9,14 @@ enum PlayerStyle {
 }
 
 struct PlayerBackdrop: View {
+    @AppStorage("visual.artwork") private var artwork = true
     var image: UIImage? = nil
     var body: some View {
         // The artwork must never contribute its scaled-to-fill size to the parent layout.
         GeometryReader { geometry in
             ZStack {
                 PlayerStyle.ink
-                if let image {
+                if artwork, let image {
                     Image(uiImage: image).resizable().scaledToFill()
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .clipped().blur(radius: 65).opacity(0.38)

@@ -82,6 +82,8 @@ struct LibraryView: View {
 
             NavigationStack {
                 Form {
+                    Section { NavigationLink("Ajustes visuales y de audio") { RivoSettingsView() }
+                        NavigationLink("Administrar letras descargadas") { LyricsManagerView() } }
                     Section("Carpetas de música") {
                         Button("Añadir carpeta desde Archivos") { showFolderImporter = true }
                         ForEach(library.folders) { folder in

@@ -9,6 +9,7 @@ import Combine
     @Published private(set) var preparingAudio = false
     @Published private(set) var audioFormat = ""
     @Published private(set) var activeAudioURL: URL?
+    private var lyricTask: Task<Void, Never>?
     private var preparation: Task<Void, Never>?
     private var resumeAfterPreparation = true
     @Published private(set) var elapsed: TimeInterval = 0
@@ -54,6 +55,9 @@ import Combine
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private let eq = AVAudioUnitEQ(numberOfBands: 31)
+    private let timePitch = AVAudioUnitTimePitch()
+    @Published var playbackRate: Float = 1 { didSet { timePitch.rate = playbackRate; if playing && isVideoMode { videoPlayer?.rate = playbackRate }; UserDefaults.standard.set(playbackRate, forKey: "audio.rate"); updateNowPlaying() } }
+    @Published var preamp: Float = 0 { didSet { eq.globalGain = preamp; UserDefaults.standard.set(preamp, forKey: "audio.preamp") } }
     private var file: AVAudioFile?
     private var startFrame: AVAudioFramePosition = 0
     private var queue: [Song] = []
@@ -72,7 +76,12 @@ import Combine
     var history: ListeningHistory?
 
     init() {
-        engine.attach(node); engine.attach(eq)
+        engine.attach(node); engine.attach(eq); engine.attach(timePitch)
+        let rate = UserDefaults.standard.float(forKey: "audio.rate")
+        playbackRate = rate >= 0.5 && rate <= 2 ? rate : 1
+        timePitch.rate = playbackRate
+        preamp = max(-12, min(0, UserDefaults.standard.float(forKey: "audio.preamp")))
+        eq.globalGain = preamp
         for (index, band) in eq.bands.enumerated() {
             band.filterType = .parametric
             band.frequency = Self.frequencies[index]
@@ -91,7 +100,8 @@ import Combine
         configureBands()
         restoringEQ = false
         engine.connect(node, to: eq, format: nil)
-        engine.connect(eq, to: engine.mainMixerNode, format: nil)
+        engine.connect(eq, to: timePitch, format: nil)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: nil)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
         setupCommands()
@@ -157,6 +167,8 @@ import Combine
     }
 
     func play(_ selected: Song, from collection: [Song]) {
+        lyricTask?.cancel()
+        lyricTask = Task { [weak self] in await self?.library?.autoLyrics(for: selected) }
         if switchingMedia { generation += 1; switchingMedia = false }
         let logical = selected.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) ?? selected) : selected
         queue = collection
@@ -206,7 +218,7 @@ import Combine
                 }
             }
             try AVAudioSession.sharedInstance().setActive(true)
-            if shouldPlay { candidate.play(); playing = true }
+            if shouldPlay { candidate.playImmediately(atRate: playbackRate); playing = true }
             scheduleProgressTimer()
             if startPlaying == true { lastFM?.nowPlaying(logical) }
             updateNowPlaying()
@@ -255,8 +267,10 @@ import Combine
             guard remaining > 0 else { playing = false; error = "El archivo está vacío o el formato no se puede reproducir"; return }
             engine.disconnectNodeOutput(node)
             engine.disconnectNodeOutput(eq)
+            engine.disconnectNodeOutput(timePitch)
             engine.connect(node, to: eq, format: audio.processingFormat)
-            engine.connect(eq, to: engine.mainMixerNode, format: audio.processingFormat)
+            engine.connect(eq, to: timePitch, format: audio.processingFormat)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: audio.processingFormat)
             try AVAudioSession.sharedInstance().setActive(true)
             try engine.start()
             node.scheduleSegment(audio, startingFrame: startFrame, frameCount: AVAudioFrameCount(min(remaining, Int64(UInt32.max))), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
@@ -306,7 +320,7 @@ import Combine
         if preparingAudio { resumeAfterPreparation = true; return }
         guard !playing, !switchingMedia else { return }
         if isVideoMode {
-            videoPlayer?.play(); playing = true; lastSamplePosition = elapsed; scheduleProgressTimer(); updateNowPlaying(); return
+            videoPlayer?.playImmediately(atRate: playbackRate); playing = true; lastSamplePosition = elapsed; scheduleProgressTimer(); updateNowPlaying(); return
         }
         guard file != nil else { return }
         do {
@@ -328,7 +342,7 @@ import Combine
                     guard let self, self.generation == epoch else { return }
                     self.videoSeeking = false
                     if success { self.elapsed = position; self.lastSamplePosition = position }
-                    if wasPlaying { videoPlayer.play() }
+                    if wasPlaying { videoPlayer.playImmediately(atRate: self.playbackRate) }
                     self.updateNowPlaying()
                 }
             }
@@ -391,7 +405,7 @@ import Combine
                                    MPMediaItemPropertyAlbumTitle: song.album,
                                    MPMediaItemPropertyPlaybackDuration: playbackDuration,
                                    MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
-                                   MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0]
+                                   MPNowPlayingInfoPropertyPlaybackRate: playing ? Double(playbackRate) : 0.0]
         if let image = library?.image(for: song) {
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
