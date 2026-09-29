@@ -72,7 +72,7 @@ struct LibraryView: View {
                         Text(folder.linked == true ? "Vinculada · sin copia" : "Biblioteca anterior · copia local").font(.caption).foregroundStyle(.secondary)
                         Button("Volver a escanear") { Task { await library.rescanFolder(folder) } }.disabled(library.scanning)
                         if folder.singleFile != true { Button("Volver a vincular carpeta") { relinkID = folder.id; showFolderImporter = true } }
-                        Button("Quitar vínculo", role: .destructive) { Task { await library.removeFolder(folder) } }
+                        Button("Quitar vínculo", role: .destructive) { Task { await library.removeFolder(folder) } }.disabled(library.scanning)
                     }.buttonStyle(.borderless)
                 }
                 Text("Los originales de iCloud deben estar descargados para reproducir sin conexión. Si cambia el permiso o la ubicación, vuelve a vincular la carpeta. Nunca se crea una copia de respaldo silenciosa.").font(.footnote)

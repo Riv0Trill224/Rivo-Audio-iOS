@@ -277,7 +277,12 @@ final class IntegrationTests: XCTestCase {
         let videoTracks = try await item.asset.loadTracks(withMediaType: .video)
         let audioTracks = try await item.asset.loadTracks(withMediaType: .audio)
         XCTAssertTrue(videoTracks.isEmpty); XCTAssertEqual(audioTracks.count, 1)
-        player.pause()
+        player.pause(); player.setInterfaceActive(true)
+        for _ in 0..<100 { if !player.backgroundAudioOnly && !player.switchingMedia { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertFalse(player.backgroundAudioOnly); XCTAssertFalse(player.playing)
+        let restored = try XCTUnwrap(player.videoPlayer?.currentItem)
+        let restoredVideo = try await restored.asset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(restoredVideo.count, 1)
     }
     @MainActor func testScanPublishesMetadataInBatchAndFinishesProgress() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

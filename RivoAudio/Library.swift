@@ -181,6 +181,7 @@ struct MusicFolder: Identifiable, Codable {
         } catch { message = "No se pudo acceder a \(folder.name). Vuelve a vincularla en Ajustes. \(error.localizedDescription)" }
     }
     func removeFolder(_ folder: MusicFolder) async {
+        guard !scanning else { return }
         songs.removeAll { $0.sourceFolderID == folder.id || ($0.sourceFolderID == nil && $0.id.hasPrefix(folder.targetName + "/")) }
         folders.removeAll { $0.id == folder.id }; scopedSources.removeValue(forKey: folder.id)
         save(); message = "Vínculo quitado. Los archivos originales se conservan."
