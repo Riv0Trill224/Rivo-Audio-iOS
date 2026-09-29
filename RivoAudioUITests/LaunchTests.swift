@@ -49,8 +49,8 @@ final class LaunchTests: XCTestCase {
         expectation(for: hidden, evaluatedWith: nil); waitForExpectations(timeout: 8)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["Cerrar"].waitForExistence(timeout: 3))
-        app.buttons["Pausar"].tap()
-        XCTAssertTrue(app.buttons["Reproducir"].waitForExistence(timeout: 3))
+        app.buttons["fullscreenTransport"].tap()
+        XCTAssertEqual(app.buttons["fullscreenTransport"].label, "Reproducir")
         for direction in [UIDeviceOrientation.landscapeLeft, .landscapeRight] {
             XCUIDevice.shared.orientation = direction
             expectation(for: wide, evaluatedWith: nil); waitForExpectations(timeout: 10)

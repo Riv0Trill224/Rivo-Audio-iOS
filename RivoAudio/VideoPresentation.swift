@@ -56,7 +56,7 @@ struct FullscreenVideoView: View {
                     HStack { Button("Cerrar", systemImage: "xmark") { dismiss() }; Spacer(); VideoLyricsToggle() }.padding().background(.black.opacity(0.6))
                     Spacer()
                     HStack {
-                        Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }.accessibilityLabel(player.playing ? "Pausar" : "Reproducir")
+                        Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }.accessibilityLabel(player.playing ? "Pausar" : "Reproducir").accessibilityIdentifier("fullscreenTransport")
                         Slider(value: Binding(get: { clock.elapsed }, set: { player.seek(to: $0) }), in: 0...max(1, player.playbackDuration), onEditingChanged: { editing in if editing { hideTask?.cancel() } else { scheduleHide() } }).accessibilityLabel("Posición del video")
                     }.padding().background(.black.opacity(0.6))
                 }.foregroundStyle(.white).simultaneousGesture(TapGesture().onEnded { scheduleHide() }) }
