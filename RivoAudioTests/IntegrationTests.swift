@@ -126,10 +126,13 @@ final class IntegrationTests: XCTestCase {
         XCTAssertNil(player.error)
         XCTAssertTrue(player.playing)
         player.pause()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: library.musicDirectory.appendingPathComponent(imported.id).path))
+        let reloaded = MusicLibrary(documents: library.documents, scanOnStart: false)
+        XCTAssertEqual(try reloaded.access(for: XCTUnwrap(reloaded.songs.first)).url.resolvingSymlinksInPath(), source.resolvingSymlinksInPath())
         // A symlink alias must produce the same relative ID as its canonical directory.
         let alias = directory.appendingPathComponent("Alias")
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: library.musicDirectory)
-        XCTAssertEqual(MediaFiles.relativePath(of: alias.appendingPathComponent(imported.id), under: library.musicDirectory), imported.id)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+        XCTAssertEqual(MediaFiles.relativePath(of: alias.appendingPathComponent(imported.id), under: directory), imported.id)
         XCTAssertNil(MediaFiles.relativePath(of: source, under: library.musicDirectory))
     }
     @MainActor func testFolderImportKeepsSubfoldersAndDoesNotDuplicateOnRescan() async throws {
@@ -207,6 +210,8 @@ final class IntegrationTests: XCTestCase {
         track.rating = 5; library.update(track)
         try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: original, to: copy)
+        track.sourceFolderID = nil; track.sourceRelativePath = nil
+        library.update(track); library.folders[0].linked = nil; library.save()
         await library.migrateAndReleaseCopies()
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
