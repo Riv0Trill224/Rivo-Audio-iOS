@@ -181,6 +181,7 @@ extension MusicLibrary {
                     }.value
                     if bytes > 0 { freed += bytes } else { kept += 1 }
                 }
+                scanProgress.set("Verificación terminada: " + folder.name, done: candidates.count, total: candidates.count)
             } catch { kept += 1 }
         }
         message = "Copias verificadas liberadas: \(ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)).\nSe conservaron \(kept) archivos o fuentes sin verificar. Los originales no se borraron."

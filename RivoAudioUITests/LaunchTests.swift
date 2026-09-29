@@ -55,7 +55,7 @@ final class LaunchTests: XCTestCase {
             if !app.buttons["Cerrar"].exists { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
             XCTAssertTrue(app.buttons["Cerrar"].waitForExistence(timeout: 3))
         }
-        let image = XCTAttachment(screenshot: XCUIDevice.shared.screenshot())
+        let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         image.name = "Landscape-video-v040"; image.lifetime = .keepAlways; add(image)
         if !app.buttons["Cerrar"].exists { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         app.buttons["Cerrar"].tap()

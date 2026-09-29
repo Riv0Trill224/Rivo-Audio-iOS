@@ -2,7 +2,7 @@
 
 Reproductor de música personal para iPhone. La primera versión está diseñada para reproducir archivos propios sin cuenta ni servidor. Su EQ de 10 bandas forma parte del motor de reproducción.
 
-## Lo que hace v0.4.0
+## Lo que hace v0.4.1
 
 - Vincula carpetas, música y videos desde **Archivos**, incluida iCloud Drive, y reproduce los originales sin duplicar la biblioteca. Conserva permisos mediante marcadores de acceso.
 - Detecta archivos añadidos a `Documents/Music`, muestra canciones y artistas, permite buscar y reproduce audio en segundo plano.
@@ -50,7 +50,7 @@ La biblioteca, puntuaciones, fotos, letras e historial se guardan en el disposit
 
 ## Versión
 
-`0.4.0` (build 10) · identificador `com.riv0trill.rivoaudio.ios` · iOS 17 o posterior.
+`0.4.1` (build 11) · identificador `com.riv0trill.rivoaudio.ios` · iOS 17 o posterior.
 
 Consulta [el estado del desarrollo](docs/ESTADO.md) para conocer las validaciones y funciones pendientes.
 
@@ -72,3 +72,5 @@ En **Ajustes → Vincular originales y liberar copias verificadas**, la app recu
 Pantalla completa admite los dos sentidos horizontales y restaura vertical al cerrar. El motor de audio se pausa junto con la reproducción; los efectos neutros se omiten, el reloj visual no actualiza la biblioteca en segundo plano y las miniaturas se almacenan en caché. FTP se apaga al pasar a segundo plano. La conversión de compatibilidad utiliza archivos temporales limitados a 64 MB; los formatos nativos se leen directamente.
 
 Actions comprueba que el paquete de aplicación descomprimido no supere 100 MB. La música del usuario, miniaturas y datos de uso son almacenamiento separado. Las pruebas de simulador verifican comportamiento; el consumo real debe medirse en un iPhone físico a igual tiempo, volumen y salida.
+
+En 0.4.1, los controles de video se ocultan tras 3 segundos y reaparecen al tocar la imagen. En segundo plano, los nuevos videos se preparan con pistas de audio únicamente; al regresar se restaura el video. El escaneo muestra progreso por carpeta y procesa metadatos fuera del hilo de interfaz, publicándolos por lote. Acerca de muestra usuario y URL del repositorio. El proyecto Windows 10 permanece como TODO para el fin de semana en docs/TODO-Windows.md.
