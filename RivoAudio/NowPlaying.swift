@@ -61,7 +61,7 @@ struct NowPlayingView: View {
                 }
             } message: { Text("El cambio conserva la posición. Las versiones pueden tener introducciones diferentes.") }
             .fullScreenCover(isPresented: $fullscreenVideo) { FullscreenVideoView() }
-            .sheet(isPresented: $showCredits) { if let song = player.song { NavigationStack { CreditsView(song: song).toolbar { Button("Cerrar") { showCredits = false } } } }
+            .sheet(isPresented: $showCredits) { if let song = player.song { NavigationStack { CreditsView(song: song).toolbar { Button("Cerrar") { showCredits = false } } } } }
             .sheet(isPresented: $showSettings) { NavigationStack { RivoSettingsView().toolbar { Button("Cerrar") { showSettings = false } } } }
             .sheet(isPresented: $showLyrics) { if let song = player.song { LyricsView(songID: song.id) } }
             .sheet(isPresented: $showEQ) { NavigationStack { EqualizerView().navigationTitle("Ecualizador").toolbar { Button("Cerrar") { showEQ = false } } } }

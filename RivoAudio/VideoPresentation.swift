@@ -20,10 +20,12 @@ struct VideoLyricsOverlay: View {
                 let text = lines.last(where: { $0.time <= player.elapsed })?.text ?? (lines.isEmpty ? plain : "")
                 if !text.isEmpty { Text(text).font(.headline).multilineTextAlignment(.center).foregroundStyle(.white).padding(8).frame(maxWidth: .infinity).background(.black.opacity(0.6)).allowsHitTesting(false) }
             }
-        }.task(id: lyricSong?.id) {
-            let raw = lyricSong.flatMap { library.localLyrics(for: $0) } ?? ""
-            lines = LRC.parse(raw); plain = lines.isEmpty ? raw : ""
-        }
+        }.task(id: lyricSong?.id) { loadLyrics() }
+            .onChange(of: library.songs) { _, _ in loadLyrics() }
+    }
+    private func loadLyrics() {
+        let raw = lyricSong.flatMap { library.localLyrics(for: $0) } ?? ""
+        lines = LRC.parse(raw); plain = lines.isEmpty ? raw : ""
     }
 }
 struct FullscreenVideoView: View {
