@@ -45,13 +45,19 @@ final class LaunchTests: XCTestCase {
         app.buttons["Pantalla completa"].tap()
         let wide = NSPredicate { _, _ in app.frame.width > app.frame.height }
         expectation(for: wide, evaluatedWith: nil); waitForExpectations(timeout: 10)
+        let hidden = NSPredicate { _, _ in !app.buttons["Cerrar"].exists && !app.sliders["Posición del video"].exists }
+        expectation(for: hidden, evaluatedWith: nil); waitForExpectations(timeout: 8)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Cerrar"].waitForExistence(timeout: 3))
         for direction in [UIDeviceOrientation.landscapeLeft, .landscapeRight] {
             XCUIDevice.shared.orientation = direction
             expectation(for: wide, evaluatedWith: nil); waitForExpectations(timeout: 10)
-            XCTAssertTrue(app.buttons["Cerrar"].exists)
+            if !app.buttons["Cerrar"].exists { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+            XCTAssertTrue(app.buttons["Cerrar"].waitForExistence(timeout: 3))
         }
-        let image = XCTAttachment(screenshot: app.screenshot())
+        let image = XCTAttachment(screenshot: XCUIDevice.shared.screenshot())
         image.name = "Landscape-video-v040"; image.lifetime = .keepAlways; add(image)
+        if !app.buttons["Cerrar"].exists { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         app.buttons["Cerrar"].tap()
         let tall = NSPredicate { _, _ in app.frame.height > app.frame.width }
         expectation(for: tall, evaluatedWith: nil); waitForExpectations(timeout: 10)
@@ -105,5 +111,6 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<8 { if app.buttons["Acerca de"].isHittable { break }; app.swipeUp() }
         app.buttons["Acerca de"].tap()
         XCTAssertTrue(app.navigationBars["Acerca de"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Desarrollado por @Riv0Trill224"].exists)
     }
 }

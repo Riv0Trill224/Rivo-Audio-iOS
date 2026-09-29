@@ -78,6 +78,16 @@ import Combine
     private var currentIndex = 0
     private var timer: Timer?
     private var interfaceActive = true
+    @Published private(set) var backgroundAudioOnly = false
+    private var audioOnlyComposition = false
+    private func updateBackgroundMedia() {
+        guard isVideoMode, let item = videoPlayer?.currentItem else { return }
+        for track in item.tracks where track.assetTrack?.mediaType == .video { track.isEnabled = interfaceActive }
+        backgroundAudioOnly = !interfaceActive || audioOnlyComposition
+        if interfaceActive && audioOnlyComposition, let video = currentVideo, !switchingMedia {
+            Task { await self.switchToVideo(video) }
+        }
+    }
     private var lastNowPlayingUpdate: TimeInterval = -1
     private var playStartedAt: Date?
     private var scrobbled = false
@@ -137,6 +147,7 @@ import Combine
     func setInterfaceActive(_ active: Bool) {
         if !active { tick() }
         interfaceActive = active
+        updateBackgroundMedia()
         if active { tick(); clock.elapsed = elapsed; updateOutput() }
         scheduleProgressTimer()
     }
@@ -230,7 +241,7 @@ import Combine
         preparation?.cancel(); preparation = nil; preparingAudio = false
         node.stop(); engine.stop(); videoPlayer?.pause(); playing = false
         updateNowPlaying()
-        defer { if generation == epoch { switchingMedia = false } }
+        defer { if generation == epoch { switchingMedia = false; if interfaceActive && audioOnlyComposition { updateBackgroundMedia() } } }
         do {
             let access = try library.access(for: video)
             let asset = AVURLAsset(url: access.url)
@@ -238,7 +249,20 @@ import Combine
             let duration = CMTimeGetSeconds(try await asset.load(.duration))
             guard duration.isFinite, duration > 0 else { throw ServiceError(message: "El video no tiene una duración válida.") }
             let target = min(max(0, position), max(0, duration - 0.05))
-            let item = AVPlayerItem(asset: asset)
+            let audioOnly = !interfaceActive
+            let playbackAsset: AVAsset
+            if audioOnly {
+                let composition = AVMutableComposition()
+                let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+                guard !audioTracks.isEmpty else { throw ServiceError(message: "Este video no contiene audio para reproducir con la pantalla bloqueada.") }
+                for track in audioTracks {
+                    let range = try await track.load(.timeRange)
+                    guard let output = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+                    try output.insertTimeRange(range, of: track, at: range.start)
+                }
+                playbackAsset = composition
+            } else { playbackAsset = asset }
+            let item = AVPlayerItem(asset: playbackAsset)
             let candidate = AVPlayer(playerItem: item)
             candidate.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
             let seekSucceeded = await candidate.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -246,6 +270,7 @@ import Combine
             guard seekSucceeded else { throw ServiceError(message: "No se pudo posicionar el video.") }
             if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer) }
             mediaAccess = access
+            audioOnlyComposition = audioOnly
             videoPlayer = candidate; currentVideo = video; videoDuration = duration; isVideoMode = true; elapsed = target; lastSamplePosition = target
             videoEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
                 Task { @MainActor in
@@ -263,6 +288,7 @@ import Combine
             }
             try AVAudioSession.sharedInstance().setActive(true)
             if shouldPlay { candidate.playImmediately(atRate: playbackRate); playing = true }
+            updateBackgroundMedia()
             scheduleProgressTimer()
             if startPlaying == true { lastFM?.nowPlaying(logical) }
             updateNowPlaying()
@@ -291,6 +317,7 @@ import Combine
         videoPlayer?.pause(); videoPlayer = nil; currentVideo = nil; isVideoMode = false; switchingMedia = false; videoSeeking = false
         if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer); videoEndObserver = nil }
         videoFailureObserver = nil
+        backgroundAudioOnly = false; audioOnlyComposition = false
         generation += 1
         let scheduledGeneration = generation
         node.stop(); engine.stop(); playing = false; file = nil

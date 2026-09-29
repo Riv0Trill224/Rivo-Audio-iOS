@@ -30,7 +30,7 @@ extension MusicLibrary {
     func setDetails(_ info: TrackDetails, for song: Song) { extras.details[song.id] = info; saveExtras() }
     func fullScan() async {
         guard !scanning else { return }
-        scanning = true; defer { scanning = false }
+        scanning = true; defer { scanning = false; scanProgress.finish() }
         var failures: [String] = []
         for folder in folders {
             await rescanFolder(folder)

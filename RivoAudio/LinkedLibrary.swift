@@ -57,6 +57,7 @@ extension MusicLibrary {
         try await indexSource(folder, source: scope)
     }
     func indexSource(_ folder: MusicFolder, source: ScopedSource) async throws {
+        scanProgress.set("Leyendo carpetas: " + folder.name)
         // Coordinate the listing without copying file bytes; all readers retain the grant.
         let files: [URL] = try await Task.detached(priority: .utility) {
             var coordinationError: NSError?; var listingError: Error?; var found: [URL] = []
@@ -73,8 +74,22 @@ extension MusicLibrary {
         }.value
         let old = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
         var indexed: [Song] = []; var unavailable = 0
-        let otherLocations = Set(songs.filter { $0.sourceFolderID != nil && $0.sourceFolderID != folder.id }.compactMap { try? access(for: $0).url.standardizedFileURL.resolvingSymlinksInPath().path })
-        for url in files {
+        let linked = songs.filter { $0.sourceFolderID != nil && $0.sourceFolderID != folder.id }
+        var roots: [UUID: (URL, Bool)] = [:]
+        var grants: [ScopedSource] = []
+        for other in folders where other.id != folder.id {
+            if let grant = try? resolve(other) { grants.append(grant); roots[other.id] = (grant.url, other.singleFile == true) }
+        }
+        let sourceRoots = roots
+        let otherLocations = await Task.detached(priority: .utility) {
+            Set(linked.compactMap { song -> String? in
+                guard let id = song.sourceFolderID, let root = sourceRoots[id] else { return nil }
+                return (root.1 ? root.0 : root.0.appendingPathComponent(song.sourceRelativePath ?? "")).standardizedFileURL.resolvingSymlinksInPath().path
+            })
+        }.value
+        withExtendedLifetime(grants) {}
+        for (offset, url) in files.enumerated() {
+            if offset % 20 == 0 { scanProgress.set("Leyendo: " + folder.name, done: offset, total: files.count) }
             if otherLocations.contains(url.standardizedFileURL.resolvingSymlinksInPath().path) { continue }
             let relative = folder.singleFile == true ? "" : (MediaFiles.relativePath(of: url, under: source.url) ?? "")
             guard folder.singleFile == true || !relative.isEmpty else { continue }
@@ -91,12 +106,16 @@ extension MusicLibrary {
         let remaining = songs.filter { $0.sourceFolderID != folder.id && !ids.contains($0.id) }
         songs = (remaining + indexed).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         if let i = folders.firstIndex(where: { $0.id == folder.id }) { folders[i].linked = true }
-        saveExtras()
-        // A failed write must abort migration before any copy is deleted.
-        try JSONEncoder().encode(songs).write(to: documents.appendingPathComponent("library.json"), options: .atomic)
-        try JSONEncoder().encode(folders).write(to: documents.appendingPathComponent("musicFolders.json"), options: .atomic)
+        scanProgress.set("Guardando: " + folder.name, done: files.count, total: files.count)
+        try await persistScan()
+        scanProgress.set("Leídos: " + folder.name, done: files.count, total: files.count)
     }
     func readSong(_ url: URL, id: String, old: Song?) async throws -> Song {
+        let result = try await Self.readMetadata(url, id: id, old: old, info: extras.details[id] ?? TrackDetails())
+        pendingDetails[id] = result.1
+        return result.0
+    }
+    nonisolated static func readMetadata(_ url: URL, id: String, old: Song?, info originalInfo: TrackDetails) async throws -> (Song, TrackDetails) {
         try MediaFiles.validate(url)
         let asset = AVURLAsset(url: url)
         let duration = CMTimeGetSeconds(try await asset.load(.duration))
@@ -131,7 +150,7 @@ extension MusicLibrary {
                 if number > 0 { if key.contains("trkn") { result.trackNumber = number } else { result.discNumber = number } }
             }
         }
-        var info = extras.details[id] ?? TrackDetails()
+        var info = originalInfo
         if info.genre.isEmpty { info.genre = await field(["genre", "tcon", "©gen"]) }
         if info.year.isEmpty {
             let commonYear = await commonText(.commonKeyCreationDate)
@@ -139,17 +158,18 @@ extension MusicLibrary {
             let alternateYear = year.isEmpty ? await field(["year", "tdrc", "tyer", "©day"]) : year
             info.year = String(alternateYear.prefix(4))
         }
-        extras.details[id] = info
-        return result
+        return (result, info)
     }
     func migrateAndReleaseCopies() async {
-        guard !scanning else { return }; scanning = true; defer { scanning = false }
+        guard !scanning else { return }; scanning = true; defer { scanning = false; scanProgress.finish() }
         var freed: Int64 = 0; var kept = 0
         for folder in folders where folder.singleFile != true {
             do {
                 let source = try resolve(folder)
                 try await indexSource(folder, source: source)
-                for song in songs where song.sourceFolderID == folder.id {
+                let candidates = songs.filter { $0.sourceFolderID == folder.id }
+                for (offset, song) in candidates.enumerated() {
+                    if offset % 10 == 0 { scanProgress.set("Verificando copias: " + folder.name, done: offset, total: candidates.count) }
                     let copy = musicDirectory.appendingPathComponent(song.id)
                     guard FileManager.default.fileExists(atPath: copy.path) else { continue }
                     let original = try access(for: song)
@@ -204,6 +224,7 @@ extension MusicLibrary {
 
 extension MusicLibrary {
     func relinkFolder(_ id: UUID, source: URL) async {
+        guard !scanning else { return }; scanning = true; defer { scanning = false; scanProgress.finish() }
         guard let index = folders.firstIndex(where: { $0.id == id }) else { return }
         let previous = folders[index]
         do {

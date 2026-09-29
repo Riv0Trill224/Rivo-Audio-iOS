@@ -192,7 +192,11 @@ struct HomeView: View {
 struct AboutView: View {
     var body: some View {
         List {
-            Section { Text("RIVØ Audio").font(.largeTitle.bold()); Text("Tu música, en su lugar."); LabeledContent("Versión", value: (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") + " (" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") + ")") }
+            Section { Text("RIVØ Audio").font(.largeTitle.bold())
+                Text("Desarrollado por @Riv0Trill224").font(.headline).textSelection(.enabled)
+                Link("https://github.com/Riv0Trill224/Rivo-Audio-iOS", destination: URL(string: "https://github.com/Riv0Trill224/Rivo-Audio-iOS")!)
+                    .font(.subheadline).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Text("Tu música, en su lugar."); LabeledContent("Versión", value: (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") + " (" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") + ")") }
             Section("Proyecto") { Text("Reproductor local para iPhone. Biblioteca vinculada, playlists, letras y créditos."); Link("Repositorio y desarrollo", destination: URL(string: "https://github.com/Riv0Trill224/Rivo-Audio-iOS")!) }
             Section("Fuentes") { Text("Créditos: MusicBrainz. Letras: LRCLIB. Fotografías: Wikimedia Commons, con la atribución indicada en cada artista.") }
             Section("Almacenamiento y energía") { Text("Los archivos vinculados permanecen en la carpeta elegida. Solo se guardan índices, ajustes, letras y miniaturas. La compatibilidad de algunos códecs puede necesitar una conversión temporal limitada a 64 MB. El reloj visual se detiene en segundo plano y el motor descansa al pausar.") }

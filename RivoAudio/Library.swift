@@ -40,6 +40,8 @@ struct MusicFolder: Identifiable, Codable {
     @Published var message: String? = nil
     @Published var extras = LibraryExtras()
     @Published var scanning = false
+    let scanProgress = ScanProgress()
+    var pendingDetails: [String: TrackDetails] = [:]
     @Published var artistPhotos: [String: String] = [:]
     @Published var photoCredits: [String: ArtistPhotoCredit] = [:]
     @Published var photoStatus: [String: String] = [:]
@@ -134,20 +136,31 @@ struct MusicFolder: Identifiable, Codable {
     }
 
     func scan(force: Bool = false) async {
+        let owner = !scanning
+        if owner { scanning = true }
+        defer { if owner { scanning = false; scanProgress.finish() } }
+        scanProgress.set("Leyendo carpetas locales")
         let linked = songs.filter { $0.sourceFolderID != nil }
         let linkedIDs = Set(linked.map(\.id))
-        let files = (FileManager.default.enumerator(at: musicDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])?.allObjects as? [URL] ?? [])
+        let root = musicDirectory
+        let files = await Task.detached(priority: .utility) {
+            (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])?.allObjects as? [URL] ?? []).filter { Self.extensions.contains($0.pathExtension.lowercased()) }
+        }.value
+        let previous = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
         var result = linked
-        for url in files where Self.extensions.contains(url.pathExtension.lowercased()) {
+        for (offset, url) in files.enumerated() {
+            if offset % 20 == 0 { scanProgress.set("Leyendo archivos locales", done: offset, total: files.count); await Task.yield() }
             guard let id = MediaFiles.relativePath(of: url, under: musicDirectory), !linkedIDs.contains(id) else { continue }
-            let old = songs.first { $0.id == id }
+            let old = previous[id]
             if !force, let old, old.albumArtist != nil { result.append(old); continue }
             if let song = try? await readSong(url, id: id, old: old) { result.append(song) }
         }
         songs = result.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        saveExtras(); save()
+        do { try await persistScan(); scanProgress.set("Lectura local completada", done: files.count, total: files.count) }
+        catch { message = error.localizedDescription }
     }
     func importFiles(_ urls: [URL]) async {
+        guard !scanning else { return }; scanning = true; defer { scanning = false; scanProgress.finish() }
         var failures = 0
         for source in urls {
             do { try await linkSource(source, singleFile: true) } catch { failures += 1 }
@@ -155,10 +168,12 @@ struct MusicFolder: Identifiable, Codable {
         message = failures == 0 ? "Archivos vinculados sin copiar audio ni video." : "No se pudieron vincular \(failures) archivos. Revisa su acceso en Archivos."
     }
     func importFolder(_ source: URL) async {
+        guard !scanning else { return }; scanning = true; defer { scanning = false; scanProgress.finish() }
         do { try await linkSource(source, singleFile: false); message = "Carpeta vinculada sin copiar audio ni video." }
         catch { message = "No se pudo vincular: \(error.localizedDescription)" }
     }
     func rescanFolder(_ folder: MusicFolder) async {
+        let owner = !scanning; if owner { scanning = true }; defer { if owner { scanning = false; scanProgress.finish() } }
         do {
             let source = try resolve(folder)
             try await indexSource(folder, source: source)

@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import Combine
 @testable import RivoAudio
 
 final class IntegrationTests: XCTestCase {
@@ -247,6 +248,54 @@ final class IntegrationTests: XCTestCase {
         let albums = AlbumCollection.grouped([first, second])
         XCTAssertEqual(albums.count, 1)
         XCTAssertEqual(albums.first?.tracks.map(\.id), [second.id, first.id])
+    }
+    @MainActor func testBackgroundVideoContainsAudioTracksOnly() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MusicLibrary(documents: root, scanOnStart: false)
+        let audio = library.musicDirectory.appendingPathComponent("tone.wav")
+        let silent = library.musicDirectory.appendingPathComponent("silent.mov")
+        try makeTone(at: audio); try await makeVideo(at: silent)
+        let composition = AVMutableComposition()
+        for (url, type) in [(audio, AVMediaType.audio), (silent, AVMediaType.video)] {
+            let asset = AVURLAsset(url: url)
+            let tracks = try await asset.loadTracks(withMediaType: type)
+            let source = try XCTUnwrap(tracks.first)
+            let target = try XCTUnwrap(composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid))
+            try target.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 3, preferredTimescale: 600)), of: source, at: .zero)
+        }
+        let video = Song(id: "mixed.mov", title: "Mixed", artist: "Test", album: "Test", duration: 3, isVideo: true)
+        let exporter = try XCTUnwrap(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality))
+        exporter.outputURL = library.url(for: video); exporter.outputFileType = .mov
+        await exporter.export(); XCTAssertEqual(exporter.status, .completed)
+        let player = AudioPlayer(); player.library = library; player.setInterfaceActive(false)
+        player.play(video, from: [video])
+        for _ in 0..<100 { if player.videoPlayer != nil || player.error != nil { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertNil(player.error)
+        XCTAssertTrue(player.backgroundAudioOnly)
+        let item = try XCTUnwrap(player.videoPlayer?.currentItem)
+        let videoTracks = try await item.asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await item.asset.loadTracks(withMediaType: .audio)
+        XCTAssertTrue(videoTracks.isEmpty); XCTAssertEqual(audioTracks.count, 1)
+        player.pause()
+    }
+    @MainActor func testScanPublishesMetadataInBatchAndFinishesProgress() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MusicLibrary(documents: root, scanOnStart: false)
+        let source = library.musicDirectory.appendingPathComponent("First.wav")
+        try makeTone(at: source)
+        for n in 1...20 { try FileManager.default.copyItem(at: source, to: library.musicDirectory.appendingPathComponent("Track\(n).wav")) }
+        var publications = 0
+        let token = library.$extras.dropFirst().sink { _ in publications += 1 }
+        await library.fullScan()
+        XCTAssertEqual(library.songs.count, 21)
+        XCTAssertLessThanOrEqual(publications, 2)
+        XCTAssertEqual(library.scanProgress.state.done, 21)
+        XCTAssertEqual(library.scanProgress.state.total, 21)
+        XCTAssertFalse(library.scanProgress.state.running)
+        XCTAssertFalse(library.scanning)
+        withExtendedLifetime(token) {}
     }
     private func makeTone(at url: URL) throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!

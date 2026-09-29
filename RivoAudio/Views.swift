@@ -31,7 +31,7 @@ struct LibraryView: View {
         }
         .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
         .confirmationDialog("Vincular música sin copiar", isPresented: $showImportOptions) {
-            Button("Seleccionar carpeta") { showFolderImporter = true }
+            Button("Seleccionar carpeta") { relinkID = nil; showFolderImporter = true }
             Button("Seleccionar archivos") { showImporter = true }
         }
         .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder]) { result in
@@ -61,6 +61,7 @@ struct LibraryView: View {
                 NavigationLink("Administrar letras descargadas") { LyricsManagerView() }
             }
             Section("Biblioteca sin duplicados") {
+                ScanProgressView(progress: library.scanProgress)
                 Button(library.scanning ? "Escaneando…" : "Escanear biblioteca completa") { Task { await library.fullScan() } }.disabled(library.scanning)
                 Button("Vincular carpeta desde Archivos") { relinkID = nil; showFolderImporter = true }.disabled(library.scanning)
                 Button("Vincular originales y liberar copias verificadas") { player.pause(); Task { await library.migrateAndReleaseCopies() } }.disabled(library.scanning)
