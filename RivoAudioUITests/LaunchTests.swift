@@ -70,7 +70,7 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Escuchas"].tap()
         XCTAssertTrue(app.navigationBars["Scrobbling"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.secureTextFields["API key"].exists)
-        app.tabBars.buttons["Canciones"].tap()
+        app.tabBars.buttons["Biblioteca"].tap()
         XCTAssertTrue(app.navigationBars["Biblioteca"].exists)
     }
 }

@@ -21,7 +21,7 @@ struct VideoLyricsOverlay: View {
                 if !text.isEmpty { Text(text).font(.headline).multilineTextAlignment(.center).foregroundStyle(.white).padding(8).frame(maxWidth: .infinity).background(.black.opacity(0.6)).allowsHitTesting(false) }
             }
         }.task(id: lyricSong?.id) { loadLyrics() }
-            .onChange(of: library.songs) { _, _ in loadLyrics() }
+            .onReceive(library.$songs) { _ in loadLyrics() }
     }
     private func loadLyrics() {
         let raw = lyricSong.flatMap { library.localLyrics(for: $0) } ?? ""
