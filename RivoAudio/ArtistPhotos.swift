@@ -104,14 +104,14 @@ extension MusicLibrary {
         defer { photoRequests.remove(artist) }
         do {
             let (data, credit) = try await ArtistPhotoSource.shared.download(artist: artist)
-            guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.9) else { throw ServiceError(message: "La imagen no tiene un formato válido.") }
+            guard let image = Self.thumbnail(data), let jpeg = image.jpegData(compressionQuality: 0.8) else { throw ServiceError(message: "La imagen no tiene un formato válido.") }
             try setArtistPhoto(jpeg, for: artist)
             photoCredits[artist] = credit
             photoStatus[artist] = credit.license
-            photoAttempts[artist] = Date(); savePhotoCredits()
+            photoAttempts[artist] = Date(); savePhotoCredits(); savePhotoAttempts()
         } catch {
             if Task.isCancelled { photoStatus[artist] = nil; return }
-            photoAttempts[artist] = Date(); photoStatus[artist] = "Sin retrato: \(error.localizedDescription)"
+            photoAttempts[artist] = Date(); savePhotoAttempts(); photoStatus[artist] = "Sin retrato: \(error.localizedDescription)"
         }
     }
     func savePhotoCredits() {

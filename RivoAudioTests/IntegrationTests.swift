@@ -1,34 +1,53 @@
 import XCTest
 import AVFoundation
+import Combine
 @testable import RivoAudio
 
 final class IntegrationTests: XCTestCase {
     func song(_ title: String, artist: String = "Example", video: Bool = false) -> Song {
         Song(id: title + (video ? ".mov" : ".wav"), title: title, artist: artist, album: "Album", duration: 180, isVideo: video)
     }
-    func testMediaMatchingKeepsVersionsAndArtistsDistinct() {
+    func testExactFilenameMatching() {
         let audio = song("My Song")
-        let official = song("My Song (Official Music Video)", video: true)
-        let live = song("My Song live", video: true)
-        let other = song("My Song", artist: "Another Artist", video: true)
-        let matches = MediaMatcher.candidates(for: audio, in: [official, live, other])
-        XCTAssertEqual(matches.map(\.id), [official.id])
-        XCTAssertEqual(MediaMatcher.automaticMatch(matches)?.id, official.id)
+        let exact = song("My Song", video: true)
+        let official = song("My Song Official Video", video: true)
+        XCTAssertEqual(MediaMatcher.candidates(for: audio, in: [exact, official]).map(\.id), [exact.id])
+        XCTAssertTrue(MediaMatcher.candidates(for: audio, in: [song("my song", video: true)]).isEmpty)
+        var second = exact; second.id = "other/My Song.mov"
+        XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [exact, second])))
     }
-    func testAmbiguousMatchRequiresChoice() {
-        let audio = song("My Song")
-        var first = song("My Song Official Video", video: true)
-        var second = first; first.id = "first.mov"; second.id = "second.mov"
-        XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [first, second])))
-        let unknown = song("My Song", artist: "Artista desconocido", video: true)
-        XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [unknown])))
+    @MainActor func testExtrasSurviveScanAndReload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = MusicLibrary(documents: directory, scanOnStart: false)
+        let track = song("Saved")
+        try makeTone(at: library.url(for: track))
+        await library.scan()
+        var saved = try XCTUnwrap(library.songs.first); saved.rating = 5; library.update(saved)
+        library.setDetails(TrackDetails(genre: "Jazz", year: "2020", credits: "Productor: Example", source: "manual"), for: saved)
+        library.extras.playlists = [LocalPlaylist(name: "Mis pistas", video: false, songIDs: [saved.id]), LocalPlaylist(name: "Mis videos", video: true)]
+        library.saveExtras(); await library.fullScan()
+        let reload = MusicLibrary(documents: directory, scanOnStart: false)
+        XCTAssertEqual(reload.songs.first?.rating, 5)
+        XCTAssertEqual(reload.extras.playlists.count, 2)
+        XCTAssertEqual(reload.details(saved).credits, "Productor: Example")
     }
-    func testSimilarSpellingIsSuggestedButNeedsConfirmation() {
-        let audio = song("Blinding Lights")
-        let video = song("Blinding Ligths Official Video", video: true)
-        let matches = MediaMatcher.candidates(for: audio, in: [video])
-        XCTAssertEqual(matches.count, 1)
-        XCTAssertNil(MediaMatcher.automaticMatch(matches))
+    func testCreditsIncludeRecordingAndWorkParticipants() async {
+        let info = await MusicBrainzCatalog.parseCredits(["artist-credit": [["name": "Singer"]], "first-release-date": "2020-01-02", "relations": [["type": "producer", "artist": ["name": "Producer"]], ["work": ["relations": [["type": "lyricist", "artist": ["name": "Writer"]]]]]]], id: "test")
+        XCTAssertTrue(info.credits.contains("Productor: Producer")); XCTAssertTrue(info.credits.contains("Letrista: Writer")); XCTAssertEqual(info.year, "2020")
+    }
+    @MainActor func testVideoCompletionKeepsNextSongAndDoesNotLoop() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = MusicLibrary(documents: directory, scanOnStart: false)
+        let first = song("First"), next = song("Next"), video = song("First", video: true)
+        try makeTone(at: library.url(for: first)); try makeTone(at: library.url(for: next)); try await makeVideo(at: library.url(for: video)); await library.scan()
+        let player = AudioPlayer(); player.library = library
+        player.play(first, from: [first, next]); player.pause()
+        await player.switchToVideo(video)
+        XCTAssertEqual(player.videoPlayer?.audiovisualBackgroundPlaybackPolicy, .continuesIfPossible)
+        player.advanceAtEnd(); XCTAssertEqual(player.song?.id, next.id)
+        player.advanceAtEnd(); XCTAssertFalse(player.playing); XCTAssertEqual(player.song?.id, next.id)
     }
     func testLastFMSignatureAndEncoding() {
         let parameters = ["api_key": "abc", "method": "auth.getSession", "token": "xyz", "format": "json"]
@@ -108,10 +127,13 @@ final class IntegrationTests: XCTestCase {
         XCTAssertNil(player.error)
         XCTAssertTrue(player.playing)
         player.pause()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: library.musicDirectory.appendingPathComponent(imported.id).path))
+        let reloaded = MusicLibrary(documents: library.documents, scanOnStart: false)
+        XCTAssertEqual(try reloaded.access(for: XCTUnwrap(reloaded.songs.first)).url.resolvingSymlinksInPath(), source.resolvingSymlinksInPath())
         // A symlink alias must produce the same relative ID as its canonical directory.
         let alias = directory.appendingPathComponent("Alias")
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: library.musicDirectory)
-        XCTAssertEqual(MediaFiles.relativePath(of: alias.appendingPathComponent(imported.id), under: library.musicDirectory), imported.id)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+        XCTAssertEqual(MediaFiles.relativePath(of: alias.appendingPathComponent(imported.id), under: directory), imported.id)
         XCTAssertNil(MediaFiles.relativePath(of: source, under: library.musicDirectory))
     }
     @MainActor func testFolderImportKeepsSubfoldersAndDoesNotDuplicateOnRescan() async throws {
@@ -172,6 +194,114 @@ final class IntegrationTests: XCTestCase {
         player.play(empty, from: [empty])
         XCTAssertNotNil(player.error); XCTAssertFalse(player.playing)
     }
+    @MainActor func testLinkedFolderReloadAndVerifiedCopyMigration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Originals")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let original = source.appendingPathComponent("Track.wav")
+        try makeTone(at: original)
+        let library = MusicLibrary(documents: root.appendingPathComponent("App"), scanOnStart: false)
+        await library.importFolder(source); await library.importFolder(source)
+        XCTAssertEqual(library.folders.count, 1); XCTAssertEqual(library.songs.count, 1)
+        var track = try XCTUnwrap(library.songs.first)
+        let copy = library.musicDirectory.appendingPathComponent(track.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
+        XCTAssertEqual(library.url(for: track).resolvingSymlinksInPath(), original.resolvingSymlinksInPath())
+        track.rating = 5; library.update(track)
+        try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        track.sourceFolderID = nil; track.sourceRelativePath = nil
+        library.update(track); library.folders[0].linked = nil; library.save()
+        await library.migrateAndReleaseCopies()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+        let reloaded = MusicLibrary(documents: library.documents, scanOnStart: false)
+        XCTAssertEqual(reloaded.songs.first?.rating, 5)
+        XCTAssertEqual(try reloaded.access(for: XCTUnwrap(reloaded.songs.first)).url.resolvingSymlinksInPath(), original.resolvingSymlinksInPath())
+        try Data("different retained copy".utf8).write(to: copy)
+        await reloaded.migrateAndReleaseCopies()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
+    }
+    @MainActor func testPauseStopsEngineAndBackgroundUsesSparseTimer() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MusicLibrary(documents: root, scanOnStart: false)
+        let track = song("Battery")
+        try makeTone(at: library.url(for: track))
+        let player = AudioPlayer(); player.library = library
+        player.play(track, from: [track])
+        XCTAssertTrue(player.isEngineRunning)
+        player.setInterfaceActive(false)
+        XCTAssertEqual(player.progressTimerInterval, 30)
+        player.pause()
+        XCTAssertFalse(player.isEngineRunning)
+        XCTAssertNil(player.progressTimerInterval)
+        player.seek(to: 1)
+        XCTAssertFalse(player.isEngineRunning)
+    }
+    func testAlbumGroupingKeepsCollaboratorsAndDiscOrder() {
+        var first = song("First", artist: "Main feat Guest")
+        first.albumArtist = "Main"; first.discNumber = 1; first.trackNumber = 2
+        var second = song("Second", artist: "Main")
+        second.albumArtist = "Main"; second.discNumber = 1; second.trackNumber = 1
+        let albums = AlbumCollection.grouped([first, second])
+        XCTAssertEqual(albums.count, 1)
+        XCTAssertEqual(albums.first?.tracks.map(\.id), [second.id, first.id])
+    }
+    @MainActor func testBackgroundVideoContainsAudioTracksOnly() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MusicLibrary(documents: root, scanOnStart: false)
+        let audio = library.musicDirectory.appendingPathComponent("tone.wav")
+        let silent = library.musicDirectory.appendingPathComponent("silent.mov")
+        try makeTone(at: audio); try await makeVideo(at: silent)
+        let composition = AVMutableComposition()
+        for (url, type) in [(audio, AVMediaType.audio), (silent, AVMediaType.video)] {
+            let asset = AVURLAsset(url: url)
+            let tracks = try await asset.loadTracks(withMediaType: type)
+            let source = try XCTUnwrap(tracks.first)
+            let target = try XCTUnwrap(composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid))
+            try target.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 3, preferredTimescale: 600)), of: source, at: .zero)
+        }
+        let video = Song(id: "mixed.mov", title: "Mixed", artist: "Test", album: "Test", duration: 3, isVideo: true)
+        let exporter = try XCTUnwrap(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality))
+        exporter.outputURL = library.url(for: video); exporter.outputFileType = .mov
+        await exporter.export(); XCTAssertEqual(exporter.status, .completed)
+        let player = AudioPlayer(); player.library = library; player.setInterfaceActive(false)
+        player.play(video, from: [video])
+        for _ in 0..<100 { if player.videoPlayer != nil || player.error != nil { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertNil(player.error)
+        XCTAssertTrue(player.backgroundAudioOnly)
+        let item = try XCTUnwrap(player.videoPlayer?.currentItem)
+        let videoTracks = try await item.asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await item.asset.loadTracks(withMediaType: .audio)
+        XCTAssertTrue(videoTracks.isEmpty); XCTAssertEqual(audioTracks.count, 1)
+        player.pause(); player.setInterfaceActive(true)
+        for _ in 0..<100 { if !player.backgroundAudioOnly && !player.switchingMedia { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertFalse(player.backgroundAudioOnly); XCTAssertFalse(player.playing)
+        let restored = try XCTUnwrap(player.videoPlayer?.currentItem)
+        let restoredVideo = try await restored.asset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(restoredVideo.count, 1)
+    }
+    @MainActor func testScanPublishesMetadataInBatchAndFinishesProgress() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MusicLibrary(documents: root, scanOnStart: false)
+        let source = library.musicDirectory.appendingPathComponent("First.wav")
+        try makeTone(at: source)
+        for n in 1...20 { try FileManager.default.copyItem(at: source, to: library.musicDirectory.appendingPathComponent("Track\(n).wav")) }
+        var publications = 0
+        let token = library.$extras.dropFirst().sink { _ in publications += 1 }
+        await library.fullScan()
+        XCTAssertEqual(library.songs.count, 21)
+        XCTAssertLessThanOrEqual(publications, 2)
+        XCTAssertEqual(library.scanProgress.state.done, 21)
+        XCTAssertEqual(library.scanProgress.state.total, 21)
+        XCTAssertFalse(library.scanProgress.state.running)
+        XCTAssertFalse(library.scanning)
+        withExtendedLifetime(token) {}
+    }
     private func makeTone(at url: URL) throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
@@ -205,5 +335,29 @@ final class IntegrationTests: XCTestCase {
         }
         input.markAsFinished(); await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? ServiceError(message: "Cannot finish video") }
+    }
+}
+
+final class LyricsPersistenceTests: XCTestCase {
+    @MainActor func testMigrationRenameAndDeleteSurviveReload() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Music"), withIntermediateDirectories: true)
+        var song = Song(id: "track.wav", title: "Before", artist: "Example", album: "Test", duration: 180)
+        song.lyrics = "[00:01.00]Hello"
+        try JSONEncoder().encode([song]).write(to: dir.appendingPathComponent("library.json"))
+        let library = MusicLibrary(documents: dir, scanOnStart: false)
+        library.migrateLyrics()
+        XCTAssertEqual(library.localLyrics(for: library.songs[0]), "[00:01.00]Hello")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(library.lyricFile(for: song)).path))
+        var renamed = library.songs[0]; renamed.title = "After"; library.update(renamed)
+        let reloaded = MusicLibrary(documents: dir, scanOnStart: false)
+        XCTAssertEqual(reloaded.localLyrics(for: reloaded.songs[0]), "[00:01.00]Hello")
+        try "[00:01]Legacy".write(to: dir.appendingPathComponent("Music/track.lrc"), atomically: true, encoding: .utf8)
+        try reloaded.deleteLyrics(for: reloaded.songs[0])
+        let deleted = MusicLibrary(documents: dir, scanOnStart: false)
+        deleted.migrateLyrics()
+        XCTAssertNil(deleted.localLyrics(for: deleted.songs[0]))
+        XCTAssertNil(deleted.lyricFile(for: deleted.songs[0]))
     }
 }

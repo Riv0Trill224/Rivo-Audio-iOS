@@ -3,17 +3,31 @@ import AVFoundation
 import MediaPlayer
 import Combine
 
+@MainActor final class PlaybackClock: ObservableObject { @Published var elapsed: TimeInterval = 0 }
+
 @MainActor final class AudioPlayer: ObservableObject {
     @Published private(set) var song: Song?
     @Published private(set) var playing = false
     @Published private(set) var preparingAudio = false
     @Published private(set) var audioFormat = ""
     @Published private(set) var activeAudioURL: URL?
+    private var lyricTask: Task<Void, Never>?
     private var preparation: Task<Void, Never>?
     private var resumeAfterPreparation = true
-    @Published private(set) var elapsed: TimeInterval = 0
+    let clock = PlaybackClock()
+    private var position: TimeInterval = 0
+    var elapsed: TimeInterval {
+        get { position }
+        set { position = newValue; if interfaceActive { clock.elapsed = newValue } }
+    }
+    private var mediaAccess: MediaAccess?
+    var isEngineRunning: Bool { engine.isRunning }
+    var progressTimerInterval: TimeInterval? { timer?.timeInterval }
     @Published var error: String?
     @Published private(set) var videoPlayer: AVPlayer?
+    @Published private(set) var currentVideo: Song?
+    @Published private(set) var outputName = "Salida del sistema"
+    @Published private(set) var outputSymbol = "speaker.wave.2"
     @Published private(set) var isVideoMode = false
     @Published private(set) var switchingMedia = false
     @Published private(set) var videoDuration: Double = 0
@@ -28,7 +42,7 @@ import Combine
     }
     var canSwitchToAudio: Bool { song?.isVideo == false }
     @Published var presetName = "Plano"
-    @Published var eqEnabled = true { didSet { eq.bypass = !eqEnabled; saveEQ() } }
+    @Published var eqEnabled = true { didSet { updateDSP(); saveEQ() } }
     @Published var bandCount = 10 { didSet { configureBands(); saveEQ() } }
     @Published var gains: [Float] = Array(repeating: 0, count: 31)
     @Published var repeatOne = false
@@ -54,12 +68,27 @@ import Combine
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private let eq = AVAudioUnitEQ(numberOfBands: 31)
+    private let timePitch = AVAudioUnitTimePitch()
+    @Published var playbackRate: Float = 1 { didSet { timePitch.rate = playbackRate; updateDSP(); if playing && isVideoMode { videoPlayer?.rate = playbackRate }; UserDefaults.standard.set(playbackRate, forKey: "audio.rate"); updateNowPlaying() } }
+    @Published var preamp: Float = 0 { didSet { eq.globalGain = preamp; updateDSP(); UserDefaults.standard.set(preamp, forKey: "audio.preamp") } }
     private var file: AVAudioFile?
     private var startFrame: AVAudioFramePosition = 0
     private var queue: [Song] = []
     var queuedSongs: [Song] { queue }
     private var currentIndex = 0
     private var timer: Timer?
+    private var interfaceActive = true
+    @Published private(set) var backgroundAudioOnly = false
+    private var audioOnlyComposition = false
+    private func updateBackgroundMedia() {
+        guard isVideoMode, let item = videoPlayer?.currentItem else { return }
+        for track in item.tracks where track.assetTrack?.mediaType == .video { track.isEnabled = interfaceActive }
+        backgroundAudioOnly = !interfaceActive || audioOnlyComposition
+        if interfaceActive && audioOnlyComposition, let video = currentVideo, !switchingMedia {
+            Task { await self.switchToVideo(video) }
+        }
+    }
+    private var lastNowPlayingUpdate: TimeInterval = -1
     private var playStartedAt: Date?
     private var scrobbled = false
     private var generation = 0
@@ -70,7 +99,12 @@ import Combine
     var history: ListeningHistory?
 
     init() {
-        engine.attach(node); engine.attach(eq)
+        engine.attach(node); engine.attach(eq); engine.attach(timePitch)
+        let rate = UserDefaults.standard.float(forKey: "audio.rate")
+        playbackRate = rate >= 0.5 && rate <= 2 ? rate : 1
+        timePitch.rate = playbackRate
+        preamp = max(-12, min(0, UserDefaults.standard.float(forKey: "audio.preamp")))
+        eq.globalGain = preamp
         for (index, band) in eq.bands.enumerated() {
             band.filterType = .parametric
             band.frequency = Self.frequencies[index]
@@ -89,19 +123,43 @@ import Combine
         configureBands()
         restoringEQ = false
         engine.connect(node, to: eq, format: nil)
-        engine.connect(eq, to: engine.mainMixerNode, format: nil)
+        engine.connect(eq, to: timePitch, format: nil)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: nil)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        updateDSP()
+        updateOutput()
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.updateOutput() } }
         setupCommands()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notice in
             if let raw = notice.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                raw == AVAudioSession.InterruptionType.began.rawValue {
                 Task { @MainActor in self?.pause() }
             }
         }
+    }
+
+    private func updateOutput() {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        outputName = outputs.map(\.portName).joined(separator: ", ")
+        let name = outputName.lowercased()
+        outputSymbol = name.contains("beats") ? "beats.studiobuds" : name.contains("airpods") ? "airpods" : outputs.contains(where: { $0.portType == .headphones || $0.portType == .bluetoothA2DP }) ? "headphones" : "speaker.wave.2"
+    }
+    func setInterfaceActive(_ active: Bool) {
+        if !active { tick() }
+        interfaceActive = active
+        updateBackgroundMedia()
+        if active { tick(); clock.elapsed = elapsed; updateOutput() }
+        scheduleProgressTimer()
+    }
+    private func scheduleProgressTimer() {
+        timer?.invalidate(); timer = nil
+        guard playing else { return }
+        // Playback is driven by AVAudioEngine/AVPlayer, never by this UI timer.
+        let interval = interfaceActive ? 1.0 : 30.0
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        timer?.tolerance = interfaceActive ? 0.2 : 5.0
     }
 
     func setPreset(_ name: String) {
@@ -124,7 +182,13 @@ import Combine
         }
         saveEQ()
     }
+    private func updateDSP() {
+        timePitch.bypass = abs(playbackRate - 1) < 0.001
+        let active = Self.activeIndices(bandCount)
+        eq.bypass = !eqEnabled || (abs(preamp) < 0.001 && active.allSatisfy { abs(gains[$0]) < 0.001 })
+    }
     private func saveEQ() {
+        updateDSP()
         guard !restoringEQ else { return }
         UserDefaults.standard.set(gains.map(Double.init), forKey: "eq.gains")
         UserDefaults.standard.set(bandCount, forKey: "eq.bands")
@@ -142,11 +206,26 @@ import Combine
     }
 
     func play(_ selected: Song, from collection: [Song]) {
+        lyricTask?.cancel()
+        let lyricSource = selected.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) ?? selected) : selected
+        lyricTask = Task { [weak self] in await self?.library?.autoLyrics(for: lyricSource) }
         if switchingMedia { generation += 1; switchingMedia = false }
-        let logical = selected.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) ?? selected) : selected
-        queue = collection
+        // A video playlist keeps videos. Album/track queues replace the paired
+        // audio in place, preserving the next song instead of creating a one-item loop.
+        let allVideo = !collection.isEmpty && collection.allSatisfy(\.isVideo)
+        let paired = selected.isVideo ? MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) : nil
+        let logical = allVideo ? selected : (paired ?? selected)
+        if allVideo { queue = collection }
+        else {
+            var seen = Set<String>()
+            queue = collection.compactMap { item in
+                let resolved = item.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: item, in: library?.songs ?? [])) ?? item) : item
+                return seen.insert(resolved.id).inserted ? resolved : nil
+            }
+        }
         if !queue.contains(where: { $0.id == logical.id }) { queue.insert(logical, at: 0) }
         currentIndex = queue.firstIndex(where: { $0.id == logical.id }) ?? 0
+        history?.record(logical, startedAt: Date())
         if selected.isVideo {
             pause(); song = logical; elapsed = 0; listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
             Task { await switchToVideo(selected, startPlaying: true) }
@@ -162,24 +241,41 @@ import Combine
         preparation?.cancel(); preparation = nil; preparingAudio = false
         node.stop(); engine.stop(); videoPlayer?.pause(); playing = false
         updateNowPlaying()
-        defer { if generation == epoch { switchingMedia = false } }
+        defer { if generation == epoch { switchingMedia = false; if interfaceActive && audioOnlyComposition { updateBackgroundMedia() } } }
         do {
-            let asset = AVURLAsset(url: library.url(for: video))
+            let access = try library.access(for: video)
+            let asset = AVURLAsset(url: access.url)
             guard try await asset.load(.isPlayable) else { throw ServiceError(message: "El video no es compatible.") }
             let duration = CMTimeGetSeconds(try await asset.load(.duration))
             guard duration.isFinite, duration > 0 else { throw ServiceError(message: "El video no tiene una duración válida.") }
             let target = min(max(0, position), max(0, duration - 0.05))
-            let item = AVPlayerItem(asset: asset)
+            let audioOnly = !interfaceActive
+            let playbackAsset: AVAsset
+            if audioOnly {
+                let composition = AVMutableComposition()
+                let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+                guard !audioTracks.isEmpty else { throw ServiceError(message: "Este video no contiene audio para reproducir con la pantalla bloqueada.") }
+                for track in audioTracks {
+                    let range = try await track.load(.timeRange)
+                    guard let output = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+                    try output.insertTimeRange(range, of: track, at: range.start)
+                }
+                playbackAsset = composition
+            } else { playbackAsset = asset }
+            let item = AVPlayerItem(asset: playbackAsset)
             let candidate = AVPlayer(playerItem: item)
+            candidate.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
             let seekSucceeded = await candidate.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             guard generation == epoch else { candidate.pause(); return }
             guard seekSucceeded else { throw ServiceError(message: "No se pudo posicionar el video.") }
             if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer) }
-            videoPlayer = candidate; videoDuration = duration; isVideoMode = true; elapsed = target; lastSamplePosition = target
+            mediaAccess = access
+            audioOnlyComposition = audioOnly
+            videoPlayer = candidate; currentVideo = video; videoDuration = duration; isVideoMode = true; elapsed = target; lastSamplePosition = target
             videoEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, self.generation == epoch, self.isVideoMode else { return }
-                    self.tick(); self.next()
+                    self.tick(); self.advanceAtEnd()
                 }
             }
             videoFailureObserver = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
@@ -191,7 +287,9 @@ import Combine
                 }
             }
             try AVAudioSession.sharedInstance().setActive(true)
-            if shouldPlay { candidate.play(); playing = true }
+            if shouldPlay { candidate.playImmediately(atRate: playbackRate); playing = true }
+            updateBackgroundMedia()
+            scheduleProgressTimer()
             if startPlaying == true { lastFM?.nowPlaying(logical) }
             updateNowPlaying()
         } catch {
@@ -216,15 +314,17 @@ import Combine
             listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
         }
         lastSamplePosition = nil
-        videoPlayer?.pause(); videoPlayer = nil; isVideoMode = false; switchingMedia = false; videoSeeking = false
+        videoPlayer?.pause(); videoPlayer = nil; currentVideo = nil; isVideoMode = false; switchingMedia = false; videoSeeking = false
         if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer); videoEndObserver = nil }
         videoFailureObserver = nil
+        backgroundAudioOnly = false; audioOnlyComposition = false
         generation += 1
         let scheduledGeneration = generation
         node.stop(); engine.stop(); playing = false; file = nil
         let source = library?.url(for: selected) ?? URL(fileURLWithPath: selected.id)
         var openingFile = true
         do {
+            mediaAccess = try library?.access(for: selected)
             try MediaFiles.validate(source)
             let audio = try AVAudioFile(forReading: preparedURL ?? source)
             openingFile = false
@@ -239,23 +339,33 @@ import Combine
             guard remaining > 0 else { playing = false; error = "El archivo está vacío o el formato no se puede reproducir"; return }
             engine.disconnectNodeOutput(node)
             engine.disconnectNodeOutput(eq)
+            engine.disconnectNodeOutput(timePitch)
             engine.connect(node, to: eq, format: audio.processingFormat)
-            engine.connect(eq, to: engine.mainMixerNode, format: audio.processingFormat)
-            try AVAudioSession.sharedInstance().setActive(true)
-            try engine.start()
+            engine.connect(eq, to: timePitch, format: audio.processingFormat)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: audio.processingFormat)
+            if startPlaying { try AVAudioSession.sharedInstance().setActive(true) }
+            updateDSP()
+            if startPlaying { try engine.start() }
             node.scheduleSegment(audio, startingFrame: startFrame, frameCount: AVAudioFrameCount(min(remaining, Int64(UInt32.max))), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, self.generation == scheduledGeneration, self.playing else { return }
-                    self.next()
+                    self.advanceAtEnd()
                 }
             }
             elapsed = seconds
             lastSamplePosition = seconds
             if startPlaying { node.play(); playing = true }
+            scheduleProgressTimer()
             if !preservingListen, let song { lastFM?.nowPlaying(song) }
             updateNowPlaying()
+            Task { [weak self] in
+                guard let self else { return }
+                _ = await self.library?.loadArtwork(selected)
+                if self.song?.id == selected.id { self.updateNowPlaying() }
+            }
         } catch {
-            playing = false; file = nil
+            engine.stop()
+            playing = false; file = nil; scheduleProgressTimer()
             if openingFile, preparedURL == nil, (try? MediaFiles.validate(source)) != nil {
                 song = selected; elapsed = seconds; preparingAudio = true; resumeAfterPreparation = startPlaying
                 updateNowPlaying()
@@ -283,19 +393,21 @@ import Combine
     func pause() {
         if preparingAudio { resumeAfterPreparation = false; return }
         guard playing else { return }
-        tick(); node.pause(); videoPlayer?.pause(); playing = false; updateNowPlaying()
+        tick(); node.pause(); engine.pause(); videoPlayer?.pause(); playing = false; scheduleProgressTimer(); updateNowPlaying()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
     func resume() {
         if preparingAudio { resumeAfterPreparation = true; return }
         guard !playing, !switchingMedia else { return }
         if isVideoMode {
-            videoPlayer?.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying(); return
+            try? AVAudioSession.sharedInstance().setActive(true)
+            videoPlayer?.playImmediately(atRate: playbackRate); playing = true; lastSamplePosition = elapsed; scheduleProgressTimer(); updateNowPlaying(); return
         }
         guard file != nil else { return }
         do {
             try AVAudioSession.sharedInstance().setActive(true)
             if !engine.isRunning { try engine.start() }
-            node.play(); playing = true; lastSamplePosition = elapsed; updateNowPlaying()
+            node.play(); playing = true; lastSamplePosition = elapsed; scheduleProgressTimer(); updateNowPlaying()
         } catch { self.error = error.localizedDescription }
     }
     func seek(to seconds: TimeInterval) {
@@ -311,21 +423,29 @@ import Combine
                     guard let self, self.generation == epoch else { return }
                     self.videoSeeking = false
                     if success { self.elapsed = position; self.lastSamplePosition = position }
-                    if wasPlaying { videoPlayer.play() }
+                    if wasPlaying { videoPlayer.playImmediately(atRate: self.playbackRate) }
                     self.updateNowPlaying()
                 }
             }
             return
         }
         if playing { tick() }
-        open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true)
-        if !wasPlaying { pause() }
+        open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true, startPlaying: wasPlaying)
+    }
+    func advanceAtEnd() {
+        if repeatOne {
+            if isVideoMode { seek(to: 0); return }
+            if let song { play(song, from: queue) }; return
+        }
+        guard !queue.isEmpty else { pause(); return }
+        if shuffle && queue.count > 1 { let choices = queue.indices.filter { $0 != currentIndex }; play(queue[choices.randomElement()!], from: queue); return }
+        guard currentIndex + 1 < queue.count else { pause(); return }
+        play(queue[currentIndex + 1], from: queue)
     }
     func next() {
         guard !queue.isEmpty else { return }
-        if repeatOne, let song { play(song, from: queue); return }
-        currentIndex = shuffle ? Int.random(in: queue.indices) : (currentIndex + 1) % queue.count
-        play(queue[currentIndex], from: queue)
+        let nextIndex = shuffle && queue.count > 1 ? queue.indices.filter { $0 != currentIndex }.randomElement()! : (currentIndex + 1) % queue.count
+        play(queue[nextIndex], from: queue)
     }
     func previous() {
         guard !queue.isEmpty else { return }
@@ -344,15 +464,15 @@ import Combine
             guard let render = node.lastRenderTime, let time = node.playerTime(forNodeTime: render) else { return }
             elapsed = min(song.duration, Double(startFrame + time.sampleTime) / time.sampleRate)
         }
-        if let last = lastSamplePosition { listenedSeconds += max(0, elapsed - last) }
+        if let last = lastSamplePosition { listenedSeconds += max(0, elapsed - last) / Double(playbackRate) }
         lastSamplePosition = elapsed
         if !scrobbled && song.duration > 30 && listenedSeconds >= min(240, song.duration / 2) {
             scrobbled = true
             library?.markPlayed(song)
-            history?.record(song, startedAt: playStartedAt ?? Date())
             lastFM?.enqueue(song, startedAt: playStartedAt ?? Date())
         }
-        if Int(elapsed) % 3 == 0 { updateNowPlaying() }
+        // The system extrapolates lock-screen progress from elapsed time and rate.
+        // Rebuilding artwork/NowPlaying every few seconds wastes energy.
     }
     private func setupCommands() {
         let controls = MPRemoteCommandCenter.shared()
@@ -368,12 +488,13 @@ import Combine
     }
     private func updateNowPlaying() {
         guard let song else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
+        lastNowPlayingUpdate = elapsed
         var info: [String: Any] = [MPMediaItemPropertyTitle: song.title,
                                    MPMediaItemPropertyArtist: song.artist,
                                    MPMediaItemPropertyAlbumTitle: song.album,
                                    MPMediaItemPropertyPlaybackDuration: playbackDuration,
                                    MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
-                                   MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0]
+                                   MPNowPlayingInfoPropertyPlaybackRate: playing ? Double(playbackRate) : 0.0]
         if let image = library?.image(for: song) {
             info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
@@ -387,14 +508,16 @@ struct Listen: Codable, Identifiable {
     let title: String
     let artist: String
     let startedAt: Date
+    var album: String? = nil
 }
 
 @MainActor final class ListeningHistory: ObservableObject {
     @Published private(set) var entries: [Listen] = []
     private let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("listening-history.json")
-    init() { if let data = try? Data(contentsOf: path), let value = try? JSONDecoder().decode([Listen].self, from: data) { entries = value } }
+    init() { if ProcessInfo.processInfo.arguments.contains("--ui-fixture") { return }; if let data = try? Data(contentsOf: path), let value = try? JSONDecoder().decode([Listen].self, from: data) { entries = value } }
     func record(_ song: Song, startedAt: Date) {
-        entries.insert(Listen(songID: song.id, title: song.title, artist: song.artist, startedAt: startedAt), at: 0)
+        entries.insert(Listen(songID: song.id, title: song.title, artist: song.artist, startedAt: startedAt, album: song.album), at: 0)
+        if entries.count > 500 { entries = Array(entries.prefix(500)) }
         if let data = try? JSONEncoder().encode(entries) { try? data.write(to: path, options: .atomic) }
     }
 }

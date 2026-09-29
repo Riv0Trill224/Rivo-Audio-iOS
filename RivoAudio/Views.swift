@@ -5,127 +5,41 @@ import AVKit
 struct LibraryView: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
-    @EnvironmentObject var history: ListeningHistory
     @EnvironmentObject var ftp: FTPServer
-    @State private var search = ""
     @State private var showImporter = false
     @State private var showFolderImporter = false
     @State private var showImportOptions = false
     @State private var showPlayer = false
     @State private var selection = 0
-    @State private var editingSong: Song?
-
-    private var filtered: [Song] {
-        guard !search.isEmpty else { return library.songs }
-        return library.songs.filter { "\($0.title) \($0.artist) \($0.album)".localizedCaseInsensitiveContains(search) }
-    }
+    @State private var relinkID: UUID?
     var body: some View {
         TabView(selection: $selection) {
             NavigationStack {
-                List {
-                    if library.songs.isEmpty {
-                        ContentUnavailableView("Tu música vive aquí", systemImage: "music.note.list", description: Text("Importa desde Archivos o copia música a la carpeta Music de RIVØ Audio desde tu computadora."))
-                    }
-                    if !library.songs.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("RIVØ AUDIO").font(.caption.bold()).tracking(3).foregroundStyle(PlayerStyle.accent)
-                            Text("Tu colección, a tu ritmo.").font(.title3.bold())
-                            HStack {
-                                Text("\(library.songs.count) pistas").font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                Button { if let first = filtered.randomElement() { player.shuffle = true; play(first) } } label: { Label("Mezclar", systemImage: "shuffle") }.buttonStyle(.bordered)
-                            }
-                        }.padding(.vertical, 8).listRowBackground(Color.clear).listRowSeparator(.hidden)
-                    }
-                    ForEach(filtered) { song in
-                        Button { play(song) } label: {
-                            SongRow(song: song).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                        .contextMenu {
-                            Button("Reproducir") { play(song) }
-                            Button("Editar información y carátula") { editingSong = song }
-                        }.listRowBackground(PlayerStyle.surface.opacity(0.7))
-                        .swipeActions(edge: .leading) {
-                            Button { play(song) } label: { Label("Reproducir", systemImage: "play.fill") }.tint(.pink)
-                        }
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .background(PlayerBackdrop())
-                .navigationTitle("Biblioteca")
-                .searchable(text: $search, prompt: "Canción, artista o álbum")
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button { Task { await library.scan() } } label: { Image(systemName: "arrow.clockwise") } }
-                    ToolbarItem(placement: .topBarTrailing) { Button { showImportOptions = true } label: { Image(systemName: "plus") }.accessibilityLabel("Añadir música") }
-                }
-            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Canciones", systemImage: "music.note") }.tag(0)
-
-            NavigationStack {
-                List(library.songs.map(\.artist).uniqued().sorted(), id: \.self) { artist in
-                    NavigationLink { ArtistView(artist: artist) } label: {
-                        HStack {
-                            ArtworkView(image: library.artistImage(artist) ?? library.songs.first(where: { $0.artist == artist }).flatMap { library.image(for: $0) }, size: 46)
-                                .task { await library.loadArtistPhoto(artist) }
-                            VStack(alignment: .leading) {
-                                Text(artist)
-                                Text("\(library.songs.filter { $0.artist == artist }.count) canciones").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }.navigationTitle("Artistas")
-            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Artistas", systemImage: "person.2") }.tag(1)
-
-            NavigationStack { EqualizerView().navigationTitle("Ecualizador") }
-                .safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("EQ", systemImage: "slider.vertical.3") }.tag(2)
-
-            NavigationStack { LastFMView() }
-                .safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Escuchas", systemImage: "chart.bar") }.tag(3)
-
-            NavigationStack {
-                Form {
-                    Section("Carpetas de música") {
-                        Button("Añadir carpeta desde Archivos") { showFolderImporter = true }
-                        ForEach(library.folders) { folder in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(folder.name).font(.headline)
-                                HStack {
-                                    Button("Volver a escanear") { Task { await library.rescanFolder(folder) } }
-                                    Spacer()
-                                    Button("Quitar de la biblioteca", role: .destructive) {
-                                        Task { await library.removeFolder(folder) }
-                                    }
-                                }.font(.footnote)
-                            }
-                        }
-                        Text("La música se copia conservando sus subcarpetas. Quitarla aquí no borra la carpeta original de Archivos.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    Section("Transferencia FTP · misma red Wi-Fi") {
-                        Toggle("Activar FTP", isOn: Binding(get: { ftp.running }, set: { $0 ? ftp.start() : ftp.stop() }))
-                        if ftp.running {
-                            LabeledContent("Servidor", value: "\(ftp.address):2121")
-                            LabeledContent("Usuario", value: "rivo")
-                            LabeledContent("Clave temporal", value: ftp.password)
-                        }
-                        Text(ftp.status).font(.footnote).foregroundStyle(.secondary)
-                        Text("Conecta tu PC por FTP en modo pasivo. Mantén RIVØ Audio abierta mientras transfieres. La clave cambia cada vez que enciendes el servidor.").font(.footnote)
-                    }
-                    Section("Archivos compartidos") {
-                        Text("En Finder, Apple Devices o iTunes para PC abre Archivos compartidos de RIVØ Audio y copia la música dentro de Documents/Music. Después pulsa actualizar en Biblioteca.").font(.footnote)
-                    }
-                }.navigationTitle("Transferir")
-            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Transferir", systemImage: "wifi") }.tag(4)
+                HomeView()
+                    .toolbar { Button { showImportOptions = true } label: { Image(systemName: "plus") }.accessibilityLabel("Añadir música") }
+            }.safeAreaInset(edge: .bottom) { MiniPlayerBar(open: { showPlayer = true }) }
+                .tabItem { Label("Inicio", systemImage: "house") }.tag(0)
+            NavigationStack { LibraryHubView() }
+                .safeAreaInset(edge: .bottom) { MiniPlayerBar(open: { showPlayer = true }) }
+                .tabItem { Label("Biblioteca", systemImage: "square.stack") }.tag(1)
+            NavigationStack { PlaylistsView(video: false) }
+                .safeAreaInset(edge: .bottom) { MiniPlayerBar(open: { showPlayer = true }) }
+                .tabItem { Label("Playlists", systemImage: "music.note.list") }.tag(2)
+            NavigationStack { settings }
+                .safeAreaInset(edge: .bottom) { MiniPlayerBar(open: { showPlayer = true }) }
+                .tabItem { Label("Ajustes", systemImage: "gearshape") }.tag(3)
         }
         .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
-        .sheet(item: $editingSong) { SongEditor(songID: $0.id) }
-        .confirmationDialog("Añadir música", isPresented: $showImportOptions) {
-            Button("Seleccionar carpeta") { showFolderImporter = true }
+        .confirmationDialog("Vincular música sin copiar", isPresented: $showImportOptions) {
+            Button("Seleccionar carpeta") { relinkID = nil; showFolderImporter = true }
             Button("Seleccionar archivos") { showImporter = true }
         }
         .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder]) { result in
             switch result {
-            case .success(let url): Task { await library.importFolder(url) }
-            case .failure(let error): library.message = error.localizedDescription
+            case .success(let url):
+                let id = relinkID; relinkID = nil
+                Task { if let id { await library.relinkFolder(id, source: url) } else { await library.importFolder(url) } }
+            case .failure(let error): relinkID = nil; library.message = error.localizedDescription
             }
         }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: true) { result in
@@ -138,29 +52,63 @@ struct LibraryView: View {
             Button("Aceptar") { library.message = nil; player.error = nil }
         } message: { Text(library.message ?? player.error ?? "") }
     }
-    @ViewBuilder private var miniPlayer: some View {
-            if let song = player.song {
-                HStack(spacing: 12) {
-                    Button { showPlayer = true } label: {
-                        HStack {
-                            ArtworkView(image: library.image(for: song), size: 44)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(song.title).font(.subheadline.bold()).lineLimit(1)
-                                Text(player.preparingAudio ? "Preparando audio…" : song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Spacer(minLength: 0)
-                        }.contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityLabel("Abrir reproductor")
-                    Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }.buttonStyle(.plain).disabled(player.preparingAudio)
-                    Button { player.next() } label: { Image(systemName: "forward.end.fill").frame(width: 36, height: 44) }.buttonStyle(.plain).accessibilityLabel("Siguiente")
-                }.padding(10).background(PlayerStyle.surface, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12)
+    private var settings: some View {
+        Form {
+            Section("Reproducción") {
+                NavigationLink("Ajustes visuales y de audio") { RivoSettingsView() }
+                NavigationLink("Ecualizador") { EqualizerView().navigationTitle("Ecualizador") }
+                NavigationLink("Last.fm y escuchas") { LastFMView() }
+                NavigationLink("Administrar letras descargadas") { LyricsManagerView() }
             }
+            Section("Biblioteca sin duplicados") {
+                ScanProgressView(progress: library.scanProgress)
+                Button(library.scanning ? "Escaneando…" : "Escanear biblioteca completa") { Task { await library.fullScan() } }.disabled(library.scanning)
+                Button("Vincular carpeta desde Archivos") { relinkID = nil; showFolderImporter = true }.disabled(library.scanning)
+                Button("Vincular originales y liberar copias verificadas") { player.pause(); Task { await library.migrateAndReleaseCopies() } }.disabled(library.scanning)
+                Text("Los nuevos audios y videos se leen de su ubicación original. Para la biblioteca anterior, liberar copias compara cada archivo antes de borrar únicamente la copia interna idéntica. Conserva puntuaciones y playlists.").font(.footnote)
+                ForEach(library.folders) { folder in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(folder.name).font(.headline)
+                        Text(folder.linked == true ? "Vinculada · sin copia" : "Biblioteca anterior · copia local").font(.caption).foregroundStyle(.secondary)
+                        Button("Volver a escanear") { Task { await library.rescanFolder(folder) } }.disabled(library.scanning)
+                        if folder.singleFile != true { Button("Volver a vincular carpeta") { relinkID = folder.id; showFolderImporter = true } }
+                        Button("Quitar vínculo", role: .destructive) { Task { await library.removeFolder(folder) } }.disabled(library.scanning)
+                    }.buttonStyle(.borderless)
+                }
+                Text("Los originales de iCloud deben estar descargados para reproducir sin conexión. Si cambia el permiso o la ubicación, vuelve a vincular la carpeta. Nunca se crea una copia de respaldo silenciosa.").font(.footnote)
+            }
+            Section("Transferencia FTP · misma red Wi-Fi") {
+                Toggle("Activar FTP", isOn: Binding(get: { ftp.running }, set: { $0 ? ftp.start() : ftp.stop() }))
+                if ftp.running {
+                    LabeledContent("Servidor", value: "\(ftp.address):2121")
+                    LabeledContent("Usuario", value: "rivo")
+                    LabeledContent("Clave temporal", value: ftp.password)
+                }
+                Text(ftp.status).font(.footnote)
+                Text("FTP se detiene al salir de la app para ahorrar batería. Los archivos enviados por FTP se almacenan una sola vez en Music.").font(.footnote)
+            }
+            Section("Archivos compartidos") {
+                Text("Puedes guardar tu única copia directamente en RIVØ Audio/Music desde Archivos, Finder o Apple Devices; después escanea la biblioteca.").font(.footnote)
+            }
+            Section { NavigationLink("Acerca de") { AboutView() } }
+        }.navigationTitle("Ajustes")
     }
-    private func play(_ song: Song) { player.play(song, from: filtered.filter { !$0.isVideo }); showPlayer = true }
 }
 
-private extension Sequence where Element: Hashable {
-    func uniqued() -> [Element] { Array(Set(self)) }
+struct MiniPlayerBar: View {
+    @EnvironmentObject var player: AudioPlayer
+    let open: () -> Void
+    var body: some View {
+        if let song = player.song {
+            HStack(spacing: 10) {
+                Button(action: open) {
+                    HStack { SongArtwork(song: song, size: 44); VStack(alignment: .leading) { Text(song.title).font(.subheadline.bold()).lineLimit(1); Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1) }; Spacer(minLength: 0) }
+                }.buttonStyle(.plain).accessibilityLabel("Abrir reproductor")
+                Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 40, height: 44) }.disabled(player.preparingAudio).accessibilityLabel(player.playing ? "Pausar" : "Reproducir")
+                Button { player.next() } label: { Image(systemName: "forward.end.fill").frame(width: 36, height: 44) }.accessibilityLabel("Siguiente")
+            }.padding(10).background(PlayerStyle.surface, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12)
+        }
+    }
 }
 
 struct SongRow: View {
@@ -168,7 +116,7 @@ struct SongRow: View {
     let song: Song
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkView(image: library.image(for: song))
+            SongArtwork(song: song)
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title).font(.body.weight(.medium)).lineLimit(1)
                 Text(song.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
@@ -290,10 +238,11 @@ struct ArtistView: View {
                 Button("Actualizar foto automáticamente") { Task { await library.loadArtistPhoto(artist, refresh: true) } }
                     .disabled(library.photoRequests.contains(artist))
             }
+            Section { NavigationLink("Información del artista") { ArtistInfoView(artist: artist) } }
             Section("\(songs.count) canciones en tu biblioteca") {
                 ForEach(songs) { song in
                     Button {
-                        player.play(song, from: songs.filter { !$0.isVideo })
+                        player.play(song, from: songs)
                     } label: { SongRow(song: song) }.buttonStyle(.plain)
                 }
             }

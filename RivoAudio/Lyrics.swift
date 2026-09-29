@@ -42,26 +42,28 @@ enum LyricSearch {
     static func fetch(song: Song) async throws -> String? {
         var components = URLComponents(string: "https://lrclib.net/api/search")!
         components.queryItems = [URLQueryItem(name: "track_name", value: song.title), URLQueryItem(name: "artist_name", value: song.artist)]
-        var request = URLRequest(url: components.url!)
+        var request = URLRequest(url: components.url!, timeoutInterval: 15)
         request.setValue("RivoAudio-iOS/0.1 (personal local player)", forHTTPHeaderField: "User-Agent")
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         let candidates = try JSONDecoder().decode([LyricResult].self, from: data)
         let normalizedTitle = normalize(song.title)
         let normalizedArtist = normalize(song.artist)
-        let best = candidates.filter { candidate in
-            let title = normalize(candidate.trackName)
-            let artist = normalize(candidate.artistName)
-            return (title == normalizedTitle || title.contains(normalizedTitle) || normalizedTitle.contains(title)) &&
-                   (artist == normalizedArtist || artist.contains(normalizedArtist) || normalizedArtist.contains(artist))
-        }.first(where: { $0.syncedLyrics != nil })
-        return best?.syncedLyrics
+        guard !normalizedTitle.isEmpty, !normalizedArtist.isEmpty, normalizedArtist != "artista desconocido" else { return nil }
+        let matches = candidates.filter { candidate in
+            normalize(candidate.trackName) == normalizedTitle && normalize(candidate.artistName) == normalizedArtist && candidate.syncedLyrics?.isEmpty == false
+        }
+        guard matches.count == 1 else { return nil }
+        return matches[0].syncedLyrics
     }
+
     static func suggested(song: Song) async throws -> [(title: String, artist: String, lyrics: String)] {
         var components = URLComponents(string: "https://lrclib.net/api/search")!
         components.queryItems = [URLQueryItem(name: "q", value: song.title)]
-        var request = URLRequest(url: components.url!)
+        var request = URLRequest(url: components.url!, timeoutInterval: 15)
         request.setValue("RivoAudio-iOS/0.1 (personal local player)", forHTTPHeaderField: "User-Agent")
-        let (data, _) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         let results = try JSONDecoder().decode([LyricResult].self, from: data)
         return results.compactMap { candidate in
             guard let lyrics = candidate.syncedLyrics else { return nil }
@@ -70,7 +72,6 @@ enum LyricSearch {
     }
     private static func normalize(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .replacingOccurrences(of: #"\([^)]*\)|\[[^]]*\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
     }
