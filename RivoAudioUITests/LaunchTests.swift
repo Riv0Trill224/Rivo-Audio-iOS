@@ -45,6 +45,10 @@ final class LaunchTests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
         XCTAssertTrue(app.sliders["Posición de reproducción"].exists)
+        let output = app.descendants(matching: .any)["outputDevice"].firstMatch
+        XCTAssertTrue(output.exists)
+        XCTAssertLessThanOrEqual(output.frame.maxY, app.frame.maxY - 20)
+        XCTAssertLessThanOrEqual(app.buttons["Cola"].frame.maxY, app.frame.maxY - 10)
         app.buttons["Cerrar reproductor"].tap()
         XCTAssertTrue(app.tabBars.buttons["EQ"].waitForExistence(timeout: 5))
         let library = XCTAttachment(screenshot: app.screenshot())

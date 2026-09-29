@@ -25,7 +25,7 @@ struct NowPlayingView: View {
                         ScrollView(.vertical) {
                             VStack(alignment: .leading, spacing: 14) {
                                 header(song)
-                                media(song, width: max(1, min(geometry.size.width - 48, geometry.size.height * 0.34, 380)))
+                                media(song, width: max(1, min(geometry.size.width - 48, geometry.size.height * 0.30, 380)))
                                 title(song)
                                 sourceSwitch
                                 options
@@ -34,7 +34,7 @@ struct NowPlayingView: View {
                                 Text(player.isVideoMode ? "VIDEO LOCAL" : player.audioFormat)
                                     .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
                                     .frame(maxWidth: .infinity)
-                                Label(player.outputName, systemImage: player.outputSymbol).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                                Label(player.outputName, systemImage: player.outputSymbol).accessibilityIdentifier("outputDevice").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                                 footer
                             }
                             .frame(width: max(1, min(geometry.size.width, 500) - 48), alignment: .leading)
