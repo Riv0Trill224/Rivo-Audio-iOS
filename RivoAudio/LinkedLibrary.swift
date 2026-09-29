@@ -73,7 +73,9 @@ extension MusicLibrary {
         }.value
         let old = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
         var indexed: [Song] = []; var unavailable = 0
+        let otherLocations = Set(songs.filter { $0.sourceFolderID != nil && $0.sourceFolderID != folder.id }.compactMap { try? access(for: $0).url.standardizedFileURL.resolvingSymlinksInPath().path })
         for url in files {
+            if otherLocations.contains(url.standardizedFileURL.resolvingSymlinksInPath().path) { continue }
             let relative = folder.singleFile == true ? "" : (MediaFiles.relativePath(of: url, under: source.url) ?? "")
             guard folder.singleFile == true || !relative.isEmpty else { continue }
             let id = folder.singleFile == true ? folder.targetName : folder.targetName + "/" + relative
@@ -120,6 +122,15 @@ extension MusicLibrary {
         if result.albumArtist == nil { result.albumArtist = await field(["albumartist", "album_artist", "tpe2", "aart"]) }
         if result.trackNumber == nil { result.trackNumber = Int((await field(["tracknumber", "trck", "trkn"])).split(separator: "/").first.map(String.init) ?? "") }
         if result.discNumber == nil { result.discNumber = Int((await field(["discnumber", "tpos", "disk"])).split(separator: "/").first.map(String.init) ?? "") }
+        // MP4 track/disc tags can be binary rather than strings.
+        for item in metadata {
+            let key = (item.identifier?.rawValue ?? "").lowercased()
+            if (key.contains("trkn") && result.trackNumber == nil) || (key.contains("disk") && result.discNumber == nil),
+               let data = try? await item.load(.dataValue), data.count >= 4 {
+                let bytes = Array(data); let number = Int(bytes[2]) * 256 + Int(bytes[3])
+                if number > 0 { if key.contains("trkn") { result.trackNumber = number } else { result.discNumber = number } }
+            }
+        }
         var info = extras.details[id] ?? TrackDetails()
         if info.genre.isEmpty { info.genre = await field(["genre", "tcon", "©gen"]) }
         if info.year.isEmpty {

@@ -316,7 +316,7 @@ import Combine
             engine.connect(node, to: eq, format: audio.processingFormat)
             engine.connect(eq, to: timePitch, format: audio.processingFormat)
             engine.connect(timePitch, to: engine.mainMixerNode, format: audio.processingFormat)
-            try AVAudioSession.sharedInstance().setActive(true)
+            if startPlaying { try AVAudioSession.sharedInstance().setActive(true) }
             updateDSP()
             if startPlaying { try engine.start() }
             node.scheduleSegment(audio, startingFrame: startFrame, frameCount: AVAudioFrameCount(min(remaining, Int64(UInt32.max))), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
@@ -403,8 +403,7 @@ import Combine
             return
         }
         if playing { tick() }
-        open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true)
-        if !wasPlaying { pause() }
+        open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true, startPlaying: wasPlaying)
     }
     func advanceAtEnd() {
         if repeatOne {
@@ -488,7 +487,7 @@ struct Listen: Codable, Identifiable {
 @MainActor final class ListeningHistory: ObservableObject {
     @Published private(set) var entries: [Listen] = []
     private let path = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("listening-history.json")
-    init() { if let data = try? Data(contentsOf: path), let value = try? JSONDecoder().decode([Listen].self, from: data) { entries = value } }
+    init() { if ProcessInfo.processInfo.arguments.contains("--ui-fixture") { return }; if let data = try? Data(contentsOf: path), let value = try? JSONDecoder().decode([Listen].self, from: data) { entries = value } }
     func record(_ song: Song, startedAt: Date) {
         entries.insert(Listen(songID: song.id, title: song.title, artist: song.artist, startedAt: startedAt, album: song.album), at: 0)
         if entries.count > 500 { entries = Array(entries.prefix(500)) }

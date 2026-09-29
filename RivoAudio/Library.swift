@@ -97,6 +97,12 @@ struct MusicFolder: Identifiable, Codable {
                 }
                 if let file = try? AVAudioFile(forWriting: url(for: fixture), settings: format.settings) { try? file.write(from: buffer) }
                 songs = [fixture]
+                if ProcessInfo.processInfo.arguments.contains("--ui-video-fixture"), let video = Bundle.main.url(forResource: "UITestVideo", withExtension: "mp4") {
+                    let target = musicDirectory.appendingPathComponent("Neon.mp4")
+                    try? FileManager.default.removeItem(at: target)
+                    try? FileManager.default.copyItem(at: video, to: target)
+                    songs = [Song(id: "Neon.mp4", title: "Video de prueba", artist: "Rivo", album: "Prueba", duration: 60, isVideo: true)]
+                }
             }
         } else if scanOnStart && !FileManager.default.fileExists(atPath: indexURL.path) { Task { await scan() } }
         #else

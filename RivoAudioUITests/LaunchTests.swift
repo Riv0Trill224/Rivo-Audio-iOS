@@ -33,6 +33,30 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(heading.frame.minX, album.frame.minX, accuracy: 1)
     }
 
+    func testFullscreenVideoRotatesBothLandscapeDirections() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-fixture", "--ui-video-fixture"]
+        app.launch()
+        let row = app.buttons.containing(.staticText, identifier: "Video de prueba").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15)); row.tap()
+        XCTAssertTrue(app.buttons["Pantalla completa"].waitForExistence(timeout: 15))
+        app.buttons["Pantalla completa"].tap()
+        let wide = NSPredicate { _, _ in app.frame.width > app.frame.height }
+        expectation(for: wide, evaluatedWith: nil); waitForExpectations(timeout: 10)
+        for direction in [UIDeviceOrientation.landscapeLeft, .landscapeRight] {
+            XCUIDevice.shared.orientation = direction
+            expectation(for: wide, evaluatedWith: nil); waitForExpectations(timeout: 10)
+            XCTAssertTrue(app.buttons["Cerrar"].exists)
+        }
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "Landscape-video-v040"; image.lifetime = .keepAlways; add(image)
+        app.buttons["Cerrar"].tap()
+        let tall = NSPredicate { _, _ in app.frame.height > app.frame.width }
+        expectation(for: tall, evaluatedWith: nil); waitForExpectations(timeout: 10)
+        XCUIDevice.shared.orientation = .portrait
+    }
     func testPlayerLayoutAndControls() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-fixture"]
