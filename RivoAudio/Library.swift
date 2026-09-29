@@ -17,6 +17,11 @@ struct Song: Identifiable, Codable, Hashable {
     var artworkFile: String? = nil
     var lyrics: String? = nil
     var metadataVerified: Bool? = nil
+    var sourceFolderID: UUID? = nil
+    var sourceRelativePath: String? = nil
+    var albumArtist: String? = nil
+    var trackNumber: Int? = nil
+    var discNumber: Int? = nil
 }
 
 struct MusicFolder: Identifiable, Codable {
@@ -25,11 +30,13 @@ struct MusicFolder: Identifiable, Codable {
     var sourcePath: String
     var targetName: String
     var bookmark: Data
+    var linked: Bool? = nil
+    var singleFile: Bool? = nil
 }
 
 @MainActor final class MusicLibrary: ObservableObject {
-    @Published private(set) var songs: [Song] = []
-    @Published private(set) var folders: [MusicFolder] = []
+    @Published var songs: [Song] = []
+    @Published var folders: [MusicFolder] = []
     @Published var message: String? = nil
     @Published var extras = LibraryExtras()
     @Published var scanning = false
@@ -37,6 +44,9 @@ struct MusicFolder: Identifiable, Codable {
     @Published var photoCredits: [String: ArtistPhotoCredit] = [:]
     @Published var photoStatus: [String: String] = [:]
     var photoRequests: Set<String> = []
+    var scopedSources: [UUID: ScopedSource] = [:]
+    var lyricIndexCache: [String: LyricRecord]? = nil
+    var artworkTasks: [String: Task<UIImage?, Never>] = [:]
     var photoAttempts: [String: Date] = [:]
     let documents: URL
     var musicDirectory: URL { documents.appendingPathComponent("Music", isDirectory: true) }
@@ -46,7 +56,8 @@ struct MusicFolder: Identifiable, Codable {
     private var photoAttemptsURL: URL { documents.appendingPathComponent("artistPhotoAttempts.json") }
     private let artworkCache = NSCache<NSString, UIImage>()
     private var missingArtwork = Set<String>()
-    static let extensions: Set<String> = ["mp3", "m4a", "aac", "alac", "wav", "aif", "aiff", "caf", "flac", "mp4", "m4v", "mov"]
+    var missingArtworkIDs = Set<String>()
+    nonisolated static let extensions: Set<String> = ["mp3", "m4a", "aac", "alac", "wav", "aif", "aiff", "caf", "flac", "mp4", "m4v", "mov"]
 
     init(documents: URL? = nil, scanOnStart: Bool = true) {
         self.documents = documents ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -93,7 +104,10 @@ struct MusicFolder: Identifiable, Codable {
         #endif
     }
 
-    func url(for song: Song) -> URL { musicDirectory.appendingPathComponent(song.id) }
+    func url(for song: Song) -> URL {
+        if song.sourceFolderID != nil { return (try? access(for: song).url) ?? documents.appendingPathComponent("Unavailable/" + song.id) }
+        return musicDirectory.appendingPathComponent(song.id)
+    }
     func save() {
         if let data = try? JSONEncoder().encode(songs) { try? data.write(to: indexURL, options: .atomic) }
         if let data = try? JSONEncoder().encode(folders) { try? data.write(to: foldersURL, options: .atomic) }
@@ -114,155 +128,41 @@ struct MusicFolder: Identifiable, Codable {
     }
 
     func scan(force: Bool = false) async {
-        let manager = FileManager.default
-        guard let enumerator = manager.enumerator(at: musicDirectory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { return }
-        let urls = (enumerator.allObjects as? [URL] ?? []).filter { Self.extensions.contains($0.pathExtension.lowercased()) }
-        let old = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
-        var result: [Song] = []
-        for url in urls {
-            guard let relative = MediaFiles.relativePath(of: url, under: musicDirectory),
-                  (try? MediaFiles.validate(url)) != nil else { continue }
-            if !force, let existing = old[relative], existing.metadataVerified != nil { result.append(existing); continue }
-            let asset = AVURLAsset(url: url)
-            let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
-            let items = (try? await asset.load(.commonMetadata)) ?? []
-            func value(_ key: AVMetadataKey) -> String? {
-                items.first(where: { $0.commonKey?.rawValue == key.rawValue })?.stringValue
-            }
-            let name = url.deletingPathExtension().lastPathComponent
-            let parts = name.components(separatedBy: " - ")
-            let title = value(.commonKeyTitle) ?? (parts.count >= 2 ? parts.dropFirst().joined(separator: " - ") : name)
-            let artist = value(.commonKeyArtist) ?? (parts.count >= 2 ? parts[0] : "Artista desconocido")
-            var imported = Song(id: relative, title: title, artist: artist, album: value(.commonKeyAlbumName) ?? "Sin álbum", duration: duration.isFinite ? duration : 0, isVideo: ["mp4", "m4v", "mov"].contains(url.pathExtension.lowercased()))
-            imported.metadataVerified = value(.commonKeyTitle) != nil && value(.commonKeyArtist) != nil
-            if var existing = old[relative] { existing.metadataVerified = imported.metadataVerified; existing.duration = imported.duration; imported = existing }
-            if extras.details[relative] == nil {
-                let metadata = (try? await asset.load(.metadata)) ?? []
-                let genre = metadata.first { ($0.identifier?.rawValue ?? "").lowercased().contains("genre") }?.stringValue ?? ""
-                let year = value(.commonKeyCreationDate) ?? ""
-                extras.details[relative] = TrackDetails(genre: genre, year: String(year.prefix(4)), credits: "", source: "")
-            }
-            result.append(imported)
+        let linked = songs.filter { $0.sourceFolderID != nil }
+        let linkedIDs = Set(linked.map(\.id))
+        let files = (FileManager.default.enumerator(at: musicDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])?.allObjects as? [URL] ?? [])
+        var result = linked
+        for url in files where Self.extensions.contains(url.pathExtension.lowercased()) {
+            guard let id = MediaFiles.relativePath(of: url, under: musicDirectory), !linkedIDs.contains(id) else { continue }
+            let old = songs.first { $0.id == id }
+            if !force, let old, old.albumArtist != nil { result.append(old); continue }
+            if let song = try? await readSong(url, id: id, old: old) { result.append(song) }
         }
-        missingArtwork.removeAll()
-        saveExtras()
         songs = result.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        save()
+        saveExtras(); save()
     }
-
     func importFiles(_ urls: [URL]) async {
         var failures = 0
-        for url in urls {
-            let access = url.startAccessingSecurityScopedResource()
-            defer { if access { url.stopAccessingSecurityScopedResource() } }
-            guard Self.extensions.contains(url.pathExtension.lowercased()) else { failures += 1; continue }
-            let target = uniqueFile(for: url.lastPathComponent)
-            do { try await MediaFiles.copyForImport(from: url, to: target) } catch { failures += 1 }
+        for source in urls {
+            do { try await linkSource(source, singleFile: true) } catch { failures += 1 }
         }
-        await scan()
-        message = failures == 0 ? "Importación terminada" : "No se pudieron copiar \(failures) archivos"
+        message = failures == 0 ? "Archivos vinculados sin copiar audio ni video." : "No se pudieron vincular \(failures) archivos. Revisa su acceso en Archivos."
     }
     func importFolder(_ source: URL) async {
-        let access = source.startAccessingSecurityScopedResource()
-        defer { if access { source.stopAccessingSecurityScopedResource() } }
-        do {
-            guard (try source.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true else {
-                throw ServiceError(message: "Selecciona una carpeta de música.")
-            }
-            let existing = folders.first { $0.sourcePath == source.standardizedFileURL.path }
-            let name = existing?.targetName ?? uniqueFolderName(source.lastPathComponent)
-            let bookmark = try source.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-            let count = try await copyFolder(source, to: musicDirectory.appendingPathComponent(name, isDirectory: true))
-            if existing == nil {
-                folders.append(MusicFolder(name: source.lastPathComponent, sourcePath: source.standardizedFileURL.path,
-                                           targetName: name, bookmark: bookmark))
-            }
-            await scan()
-            message = "Carpeta importada: \(count) archivos nuevos o actualizados."
-        } catch { message = "No se pudo importar la carpeta: \(error.localizedDescription)" }
+        do { try await linkSource(source, singleFile: false); message = "Carpeta vinculada sin copiar audio ni video." }
+        catch { message = "No se pudo vincular: \(error.localizedDescription)" }
     }
-
     func rescanFolder(_ folder: MusicFolder) async {
         do {
-            var stale = false
-            let source = try URL(resolvingBookmarkData: folder.bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
-            let access = source.startAccessingSecurityScopedResource()
-            defer { if access { source.stopAccessingSecurityScopedResource() } }
-            guard access || source.isFileURL && FileManager.default.isReadableFile(atPath: source.path) else {
-                throw ServiceError(message: "El acceso caducó. Vuelve a añadir la carpeta desde Archivos.")
-            }
-            let count = try await copyFolder(source, to: musicDirectory.appendingPathComponent(folder.targetName, isDirectory: true))
-            if stale, let index = folders.firstIndex(where: { $0.id == folder.id }) {
-                folders[index].bookmark = try source.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-            }
-            await scan()
-            message = "Carpeta actualizada: \(count) archivos nuevos o modificados."
-        } catch { message = "No se pudo actualizar \(folder.name): \(error.localizedDescription)" }
+            let source = try resolve(folder)
+            try await indexSource(folder, source: source)
+            message = "Carpeta actualizada sin copiar archivos."
+        } catch { message = "No se pudo acceder a \(folder.name). Vuelve a vincularla en Ajustes. \(error.localizedDescription)" }
     }
-
     func removeFolder(_ folder: MusicFolder) async {
-        do {
-            let destination = musicDirectory.appendingPathComponent(folder.targetName, isDirectory: true)
-            try FileManager.default.removeItem(at: destination)
-            folders.removeAll { $0.id == folder.id }
-            await scan()
-            message = "Se quitó \(folder.name) de la biblioteca. La carpeta original sigue en Archivos."
-        } catch { message = "No se pudo quitar la carpeta: \(error.localizedDescription)" }
-    }
-
-    private func uniqueFolderName(_ name: String) -> String {
-        let safe = name.isEmpty ? "Música importada" : name
-        var candidate = safe
-        var suffix = 2
-        while FileManager.default.fileExists(atPath: musicDirectory.appendingPathComponent(candidate).path) {
-            candidate = "\(safe) (\(suffix))"; suffix += 1
-        }
-        return candidate
-    }
-
-    private func copyFolder(_ source: URL, to destination: URL) async throws -> Int {
-        guard let enumerator = FileManager.default.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-                                                               options: [.skipsHiddenFiles]) else {
-            throw ServiceError(message: "No se puede leer esta carpeta desde Archivos.")
-        }
-        let files = (enumerator.allObjects as? [URL] ?? []).filter {
-            Self.extensions.contains($0.pathExtension.lowercased()) || $0.pathExtension.lowercased() == "lrc"
-        }
-        var count = 0
-        var failures = 0
-        for file in files {
-            guard let relative = MediaFiles.relativePath(of: file, under: source) else { continue }
-            let target = destination.appendingPathComponent(relative)
-            do {
-                let sourceSize = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize
-                let targetSize = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize
-                let sourceDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-                let targetDate = try? target.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-                if sourceSize == targetSize, targetSize != nil, sourceDate == targetDate { continue }
-                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                let temporary = target.deletingLastPathComponent().appendingPathComponent(".import-" + UUID().uuidString + "." + file.pathExtension)
-                defer { try? FileManager.default.removeItem(at: temporary) }
-                try await MediaFiles.copyForImport(from: file, to: temporary)
-                if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary) }
-                else { try FileManager.default.moveItem(at: temporary, to: target) }
-                count += 1
-            } catch { failures += 1 }
-        }
-        if failures > 0 { throw ServiceError(message: "\(failures) archivos no pudieron copiarse. Revisa que estén descargados en Archivos.") }
-        return count
-    }
-
-    private func uniqueFile(for filename: String) -> URL {
-        let original = musicDirectory.appendingPathComponent(filename)
-        guard FileManager.default.fileExists(atPath: original.path) else { return original }
-        let stem = original.deletingPathExtension().lastPathComponent
-        let ext = original.pathExtension
-        var n = 2
-        while true {
-            let candidate = musicDirectory.appendingPathComponent("\(stem) (\(n)).\(ext)")
-            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-            n += 1
-        }
+        songs.removeAll { $0.sourceFolderID == folder.id || ($0.sourceFolderID == nil && $0.id.hasPrefix(folder.targetName + "/")) }
+        folders.removeAll { $0.id == folder.id }; scopedSources.removeValue(forKey: folder.id)
+        save(); message = "Vínculo quitado. Los archivos originales se conservan."
     }
 
     func setArtwork(_ imageData: Data, for song: Song) throws {
@@ -285,11 +185,8 @@ struct MusicFolder: Identifiable, Codable {
         if missingArtwork.contains(key as String) { return nil }
         let data: Data?
         if let file = song.artworkFile { data = try? Data(contentsOf: documents.appendingPathComponent(file)) }
-        else {
-            let asset = AVURLAsset(url: url(for: song))
-            data = asset.commonMetadata.first(where: { $0.commonKey?.rawValue == AVMetadataKey.commonKeyArtwork.rawValue })?.dataValue
-        }
-        guard let data, let image = Self.thumbnail(data) else { missingArtwork.insert(key as String); return nil }
+        else { data = try? Data(contentsOf: artworkURL(song)) }
+        guard let data, let image = Self.thumbnail(data) else { return nil }
         artworkCache.setObject(image, forKey: key, cost: Int(image.size.width * image.size.height * 4))
         return image
     }
@@ -302,12 +199,12 @@ struct MusicFolder: Identifiable, Codable {
         artworkCache.setObject(image, forKey: key, cost: Int(image.size.width * image.size.height * 4))
         return image
     }
-    static func thumbnail(_ data: Data) -> UIImage? {
+    nonisolated static func thumbnail(_ data: Data) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceThumbnailMaxPixelSize: 900
+                kCGImageSourceThumbnailMaxPixelSize: 480
               ] as CFDictionary) else { return nil }
         return UIImage(cgImage: cgImage)
     }

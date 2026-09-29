@@ -19,7 +19,7 @@ struct PlayerBackdrop: View {
                 if artwork, let image {
                     Image(uiImage: image).resizable().scaledToFill()
                         .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped().blur(radius: 65).opacity(0.38)
+                        .clipped().opacity(0.15)
                 }
                 LinearGradient(colors: [.purple.opacity(0.30), PlayerStyle.ink.opacity(0.8), PlayerStyle.ink], startPoint: .topTrailing, endPoint: .bottomLeading)
             }
@@ -46,22 +46,27 @@ struct TransportButton: View {
 }
 
 actor WaveformReader {
+    private var cache: [URL: [Float]] = [:]
     static let shared = WaveformReader()
     func peaks(_ url: URL) -> [Float] {
+        if let cached = cache[url] { return cached }
         guard let file = try? AVAudioFile(forReading: url), file.length > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1024) else { return [] }
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 2048) else { return [] }
+        // Bounded sequential preview. Random seeking through compressed media can
+        // repeatedly decode from the start of a long track (quadratic work).
         var values: [Float] = []
-        for index in 0..<56 {
+        for _ in 0..<56 {
             if Task.isCancelled { return [] }
-            file.framePosition = min(file.length - 1, Int64(Double(index) / 56 * Double(file.length)))
-            do { try file.read(into: buffer, frameCount: 1024) } catch { return [] }
+            do { try file.read(into: buffer, frameCount: 2048) } catch { return [] }
             guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return [] }
             var sum: Float = 0
             for frame in 0..<Int(buffer.frameLength) { sum += samples[frame] * samples[frame] }
             values.append(sqrt(sum / Float(buffer.frameLength)))
         }
         let maximum = max(values.max() ?? 0, 0.001)
-        return values.map { $0 / maximum }
+        let result = values.map { $0 / maximum }
+        if cache.count >= 128 { cache.removeAll() }; cache[url] = result
+        return result
     }
 }
 

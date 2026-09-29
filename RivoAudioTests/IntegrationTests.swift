@@ -190,6 +190,59 @@ final class IntegrationTests: XCTestCase {
         player.play(empty, from: [empty])
         XCTAssertNotNil(player.error); XCTAssertFalse(player.playing)
     }
+    @MainActor func testLinkedFolderReloadAndVerifiedCopyMigration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Originals")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let original = source.appendingPathComponent("Track.wav")
+        try makeTone(at: original)
+        let library = MusicLibrary(documents: root.appendingPathComponent("App"), scanOnStart: false)
+        await library.importFolder(source); await library.importFolder(source)
+        XCTAssertEqual(library.folders.count, 1); XCTAssertEqual(library.songs.count, 1)
+        var track = try XCTUnwrap(library.songs.first)
+        let copy = library.musicDirectory.appendingPathComponent(track.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
+        XCTAssertEqual(library.url(for: track).resolvingSymlinksInPath(), original.resolvingSymlinksInPath())
+        track.rating = 5; library.update(track)
+        try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: original, to: copy)
+        await library.migrateAndReleaseCopies()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+        let reloaded = MusicLibrary(documents: library.documents, scanOnStart: false)
+        XCTAssertEqual(reloaded.songs.first?.rating, 5)
+        XCTAssertEqual(try reloaded.access(for: XCTUnwrap(reloaded.songs.first)).url.resolvingSymlinksInPath(), original.resolvingSymlinksInPath())
+        try Data("different retained copy".utf8).write(to: copy)
+        await reloaded.migrateAndReleaseCopies()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
+    }
+    @MainActor func testPauseStopsEngineAndBackgroundUsesSparseTimer() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MusicLibrary(documents: root, scanOnStart: false)
+        let track = song("Battery")
+        try makeTone(at: library.url(for: track))
+        let player = AudioPlayer(); player.library = library
+        player.play(track, from: [track])
+        XCTAssertTrue(player.isEngineRunning)
+        player.setInterfaceActive(false)
+        XCTAssertEqual(player.progressTimerInterval, 30)
+        player.pause()
+        XCTAssertFalse(player.isEngineRunning)
+        XCTAssertNil(player.progressTimerInterval)
+        player.seek(to: 1)
+        XCTAssertFalse(player.isEngineRunning)
+    }
+    func testAlbumGroupingKeepsCollaboratorsAndDiscOrder() {
+        var first = song("First", artist: "Main feat Guest")
+        first.albumArtist = "Main"; first.discNumber = 1; first.trackNumber = 2
+        var second = song("Second", artist: "Main")
+        second.albumArtist = "Main"; second.discNumber = 1; second.trackNumber = 1
+        let albums = AlbumCollection.grouped([first, second])
+        XCTAssertEqual(albums.count, 1)
+        XCTAssertEqual(albums.first?.tracks.map(\.id), [second.id, first.id])
+    }
     private func makeTone(at url: URL) throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         let file = try AVAudioFile(forWriting: url, settings: format.settings)

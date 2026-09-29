@@ -4,6 +4,7 @@ import AVFoundation
 struct NowPlayingView: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var clock: PlaybackClock
     @Environment(\.dismiss) private var dismiss
     @State private var showSettings = false
     @State private var showCredits = false
@@ -50,7 +51,7 @@ struct NowPlayingView: View {
             .toolbar(.hidden, for: .navigationBar)
             .preferredColorScheme(.dark)
             .tint(PlayerStyle.accent)
-            .task(id: player.song?.id) { if let song = player.song { cover = library.image(for: song) } }
+            .task(id: player.song?.id) { if let song = player.song { cover = await library.loadArtwork(song) } }
             .task(id: player.activeAudioURL) {
                 peaks = []
                 if let url = player.activeAudioURL { peaks = await WaveformReader.shared.peaks(url) }
@@ -94,7 +95,7 @@ struct NowPlayingView: View {
         Group {
             if player.isVideoMode, let video = player.videoPlayer {
                 VStack {
-                    VideoSurface(player: video).aspectRatio(16 / 9, contentMode: .fit).overlay(alignment: .bottom) { VideoLyricsOverlay() }.clipShape(RoundedRectangle(cornerRadius: 22))
+                    Group { if !fullscreenVideo { VideoSurface(player: video) } else { Color.black } }.aspectRatio(16 / 9, contentMode: .fit).overlay(alignment: .bottom) { VideoLyricsOverlay() }.clipShape(RoundedRectangle(cornerRadius: 22))
                     HStack { VideoLyricsToggle(); Spacer(); Button("Pantalla completa", systemImage: "arrow.up.left.and.arrow.down.right") { fullscreenVideo = true } }
                 }
             } else {
@@ -156,12 +157,12 @@ struct NowPlayingView: View {
     private var timeline: some View {
         VStack(spacing: 3) {
             if !peaks.isEmpty && !player.isVideoMode {
-                PlaybackWaveform(peaks: peaks, progress: (dragProgress ?? player.elapsed) / max(1, player.playbackDuration))
+                PlaybackWaveform(peaks: peaks, progress: (dragProgress ?? clock.elapsed) / max(1, player.playbackDuration))
             }
-            Slider(value: Binding(get: { dragProgress ?? player.elapsed }, set: { dragProgress = $0 }), in: 0...max(1, player.playbackDuration)) { editing in
+            Slider(value: Binding(get: { dragProgress ?? clock.elapsed }, set: { dragProgress = $0 }), in: 0...max(1, player.playbackDuration)) { editing in
                 if !editing, let position = dragProgress { player.seek(to: position); dragProgress = nil }
             }.accessibilityLabel("Posición de reproducción").disabled(player.preparingAudio || player.switchingMedia)
-            HStack { Text(format(dragProgress ?? player.elapsed)); Spacer(); Text(format(player.playbackDuration)) }
+            HStack { Text(format(dragProgress ?? clock.elapsed)); Spacer(); Text(format(player.playbackDuration)) }
                 .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.55))
         }
     }
@@ -197,6 +198,7 @@ struct NowPlayingView: View {
 struct LyricsView: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var clock: PlaybackClock
     @Environment(\.dismiss) private var dismiss
     let songID: String
     @State private var lyrics = ""
@@ -210,7 +212,7 @@ struct LyricsView: View {
     @State private var lines: [LyricLine] = []
     private var activeID: Int? {
         guard player.song?.id == songID else { return nil }
-        return lines.last(where: { $0.time <= player.elapsed })?.id
+        return lines.last(where: { $0.time <= clock.elapsed })?.id
     }
     var body: some View {
         NavigationStack {

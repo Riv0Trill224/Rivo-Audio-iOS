@@ -53,6 +53,8 @@ actor AudioFileLoader {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let target = directory.appendingPathComponent(key).appendingPathExtension("caf")
         if let cached = try? AVAudioFile(forReading: target), cached.length > 0 { return target }
+        // Temporary compatibility decoding is bounded and old PCM is discarded.
+        for old in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] where old != target { try? FileManager.default.removeItem(at: old) }
         let asset = AVURLAsset(url: source)
         guard !(try await asset.load(.hasProtectedContent)) else {
             throw ServiceError(message: "Este archivo tiene protección DRM. Importa una copia de audio sin protección.")
@@ -95,6 +97,7 @@ actor AudioFileLoader {
             if file == nil { file = try AVAudioFile(forWriting: staging, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: true) }
             try file?.write(from: buffer)
             framesWritten += Int64(frames)
+            if framesWritten * Int64(format.channelCount) * 4 > 64 * 1024 * 1024 { throw ServiceError(message: "La conversión temporal superaría 64 MB. Usa un archivo compatible con reproducción directa.") }
         }
         guard reader.status == .completed, framesWritten > 0 else {
             throw reader.error ?? ServiceError(message: "El archivo está incompleto o su códec no es compatible con iOS.")

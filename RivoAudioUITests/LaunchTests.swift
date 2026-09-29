@@ -50,31 +50,32 @@ final class LaunchTests: XCTestCase {
         XCTAssertLessThanOrEqual(output.frame.maxY, app.frame.maxY - 20)
         XCTAssertLessThanOrEqual(app.buttons["Cola"].frame.maxY, app.frame.maxY - 10)
         app.buttons["Cerrar reproductor"].tap()
-        XCTAssertTrue(app.tabBars.buttons["EQ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.tabBars.buttons["Ajustes"].waitForExistence(timeout: 5))
         let library = XCTAttachment(screenshot: app.screenshot())
         library.name = "Biblioteca-v013"; library.lifetime = .keepAlways; add(library)
-        app.tabBars.buttons["EQ"].tap()
+        app.tabBars.buttons["Ajustes"].tap()
+        app.buttons["Ecualizador"].tap()
         XCTAssertTrue(app.navigationBars["Ecualizador"].waitForExistence(timeout: 5))
         let eq = XCTAttachment(screenshot: app.screenshot())
         eq.name = "EQ-v013"; eq.lifetime = .keepAlways; add(eq)
     }
-    func testLibraryEqualizerAndTransfersOpen() {
+    func testLibraryAlbumsAndSettingsOpen() {
         continueAfterFailure = false
         let app = XCUIApplication()
+        app.launchArguments = ["--ui-fixture"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Biblioteca"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["EQ"].tap()
-        XCTAssertTrue(app.navigationBars["Ecualizador"].waitForExistence(timeout: 5))
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Ecualizador"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        XCTAssertTrue(app.navigationBars["Inicio"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Biblioteca"].tap()
+        app.buttons["library-Álbumes"].tap()
+        XCTAssertTrue(app.navigationBars["Álbumes"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "album-")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Álbum"].waitForExistence(timeout: 5))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Album-iPhone13-v040"; shot.lifetime = .keepAlways; add(shot)
         app.tabBars.buttons["Ajustes"].tap()
         XCTAssertTrue(app.navigationBars["Ajustes"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Escuchas"].tap()
-        XCTAssertTrue(app.navigationBars["Scrobbling"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.secureTextFields["API key"].exists)
-        app.tabBars.buttons["Biblioteca"].tap()
-        XCTAssertTrue(app.navigationBars["Biblioteca"].exists)
+        for _ in 0..<8 { if app.buttons["Acerca de"].isHittable { break }; app.swipeUp() }
+        app.buttons["Acerca de"].tap()
+        XCTAssertTrue(app.navigationBars["Acerca de"].waitForExistence(timeout: 5))
     }
 }

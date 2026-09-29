@@ -11,8 +11,9 @@ extension MusicLibrary {
     var lyricsDirectory: URL { documents.appendingPathComponent("Lyrics", isDirectory: true) }
     private var lyricIndexURL: URL { lyricsDirectory.appendingPathComponent("index.json") }
     func lyricRecords() -> [String: LyricRecord] {
-        guard let data = try? Data(contentsOf: lyricIndexURL) else { return [:] }
-        return (try? JSONDecoder().decode([String: LyricRecord].self, from: data)) ?? [:]
+        if let cached = lyricIndexCache { return cached }
+        let value = (try? Data(contentsOf: lyricIndexURL)).flatMap { try? JSONDecoder().decode([String: LyricRecord].self, from: $0) } ?? [:]
+        lyricIndexCache = value; return value
     }
     func lyricFile(for song: Song) -> URL? {
         guard let record = lyricRecords()[song.id] else { return nil }
@@ -25,6 +26,7 @@ extension MusicLibrary {
         var records = lyricRecords()
         records[song.id] = LyricRecord(file: name, source: source, updated: Date())
         try JSONEncoder().encode(records).write(to: lyricIndexURL, options: .atomic)
+        lyricIndexCache = records
         var copy = songs.first(where: { $0.id == song.id }) ?? song
         copy.lyrics = nil
         update(copy)
@@ -39,12 +41,16 @@ extension MusicLibrary {
         records.removeValue(forKey: song.id)
         try FileManager.default.createDirectory(at: lyricsDirectory, withIntermediateDirectories: true)
         try JSONEncoder().encode(records).write(to: lyricIndexURL, options: .atomic)
+        lyricIndexCache = records
         // Empty string suppresses re-import of a legacy sidecar after explicit deletion.
         var copy = songs.first(where: { $0.id == song.id }) ?? song
         copy.lyrics = ""
         update(copy)
     }
     func migrateLyrics() {
+        let marker = lyricsDirectory.appendingPathComponent("migration-v2.done")
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        defer { try? FileManager.default.createDirectory(at: lyricsDirectory, withIntermediateDirectories: true); try? Data().write(to: marker) }
         for song in songs where lyricFile(for: song) == nil {
             let legacy = song.lyrics ?? (try? String(contentsOf: url(for: song).deletingPathExtension().appendingPathExtension("lrc"), encoding: .utf8))
             if let legacy, !legacy.isEmpty { try? saveLyrics(legacy, for: song, source: "Migración local") }

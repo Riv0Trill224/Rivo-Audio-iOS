@@ -7,6 +7,7 @@ struct VideoLyricsToggle: View {
 struct VideoLyricsOverlay: View {
     @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var clock: PlaybackClock
     @AppStorage("video.lyrics") private var visible = true
     @State private var lines: [LyricLine] = []
     @State private var plain = ""
@@ -17,7 +18,7 @@ struct VideoLyricsOverlay: View {
     var body: some View {
         Group {
             if visible {
-                let text = lines.last(where: { $0.time <= player.elapsed })?.text ?? (lines.isEmpty ? plain : "")
+                let text = lines.last(where: { $0.time <= clock.elapsed })?.text ?? (lines.isEmpty ? plain : "")
                 if !text.isEmpty { Text(text).font(.headline).multilineTextAlignment(.center).foregroundStyle(.white).padding(8).frame(maxWidth: .infinity).background(.black.opacity(0.6)).allowsHitTesting(false) }
             }
         }.task(id: lyricSong?.id) { loadLyrics() }
@@ -30,6 +31,7 @@ struct VideoLyricsOverlay: View {
 }
 struct FullscreenVideoView: View {
     @EnvironmentObject var player: AudioPlayer
+    @EnvironmentObject var clock: PlaybackClock
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         GeometryReader { geometry in
@@ -43,10 +45,12 @@ struct FullscreenVideoView: View {
                     Spacer()
                     HStack {
                         Button { player.toggle() } label: { Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }.accessibilityLabel(player.playing ? "Pausar" : "Reproducir")
-                        Slider(value: Binding(get: { player.elapsed }, set: { player.seek(to: $0) }), in: 0...max(1, player.playbackDuration)).accessibilityLabel("Posición del video")
+                        Slider(value: Binding(get: { clock.elapsed }, set: { player.seek(to: $0) }), in: 0...max(1, player.playbackDuration)).accessibilityLabel("Posición del video")
                     }.padding().background(.black.opacity(0.6))
                 }.foregroundStyle(.white)
             }
-        }.onChange(of: player.isVideoMode) { _, video in if !video { dismiss() } }
+        }.onAppear { OrientationDelegate.fullscreen(true) }
+        .onDisappear { OrientationDelegate.fullscreen(false) }
+        .onChange(of: player.isVideoMode) { _, video in if !video { dismiss() } }
     }
 }
