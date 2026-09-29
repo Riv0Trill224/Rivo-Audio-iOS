@@ -3,6 +3,7 @@ import AVFoundation
 import UniformTypeIdentifiers
 
 struct RivoSettingsView: View {
+    @EnvironmentObject var library: MusicLibrary
     @EnvironmentObject var player: AudioPlayer
     @AppStorage("visual.artwork") private var artwork = true
     @AppStorage("visual.motion") private var motion = true
@@ -10,6 +11,7 @@ struct RivoSettingsView: View {
     @AppStorage("lyrics.auto") private var automatic = true
     var body: some View {
         Form {
+            Section("Biblioteca") { Button(library.scanning ? "Escaneando…" : "Escanear biblioteca completa") { Task { await library.fullScan() } }.disabled(library.scanning) }
             Section("Opciones visuales") {
                 Toggle("Fondo de carátula", isOn: $artwork)
                 Toggle("Animar letras", isOn: $motion)

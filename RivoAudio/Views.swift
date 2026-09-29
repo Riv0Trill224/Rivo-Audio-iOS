@@ -23,6 +23,7 @@ struct LibraryView: View {
         TabView(selection: $selection) {
             NavigationStack {
                 List {
+                    LibrarySections()
                     if library.songs.isEmpty {
                         ContentUnavailableView("Tu música vive aquí", systemImage: "music.note.list", description: Text("Importa desde Archivos o copia música a la carpeta Music de RIVØ Audio desde tu computadora."))
                     }
@@ -58,7 +59,7 @@ struct LibraryView: View {
                     ToolbarItem(placement: .topBarLeading) { Button { Task { await library.scan() } } label: { Image(systemName: "arrow.clockwise") } }
                     ToolbarItem(placement: .topBarTrailing) { Button { showImportOptions = true } label: { Image(systemName: "plus") }.accessibilityLabel("Añadir música") }
                 }
-            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Canciones", systemImage: "music.note") }.tag(0)
+            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Biblioteca", systemImage: "music.note") }.tag(0)
 
             NavigationStack {
                 List(library.songs.map(\.artist).uniqued().sorted(), id: \.self) { artist in
@@ -82,7 +83,8 @@ struct LibraryView: View {
 
             NavigationStack {
                 Form {
-                    Section { NavigationLink("Ajustes visuales y de audio") { RivoSettingsView() }
+                    Section { Button(library.scanning ? "Escaneando…" : "Escanear biblioteca completa") { Task { await library.fullScan() } }.disabled(library.scanning)
+                        NavigationLink("Ajustes visuales y de audio") { RivoSettingsView() }
                         NavigationLink("Administrar letras descargadas") { LyricsManagerView() } }
                     Section("Carpetas de música") {
                         Button("Añadir carpeta desde Archivos") { showFolderImporter = true }
@@ -114,8 +116,8 @@ struct LibraryView: View {
                     Section("Archivos compartidos") {
                         Text("En Finder, Apple Devices o iTunes para PC abre Archivos compartidos de RIVØ Audio y copia la música dentro de Documents/Music. Después pulsa actualizar en Biblioteca.").font(.footnote)
                     }
-                }.navigationTitle("Transferir")
-            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Transferir", systemImage: "wifi") }.tag(4)
+                }.navigationTitle("Ajustes")
+            }.safeAreaInset(edge: .bottom) { miniPlayer }.tabItem { Label("Ajustes", systemImage: "gearshape") }.tag(4)
         }
         .fullScreenCover(isPresented: $showPlayer) { NowPlayingView() }
         .sheet(item: $editingSong) { SongEditor(songID: $0.id) }
@@ -157,7 +159,7 @@ struct LibraryView: View {
                 }.padding(10).background(PlayerStyle.surface, in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 12)
             }
     }
-    private func play(_ song: Song) { player.play(song, from: filtered.filter { !$0.isVideo }); showPlayer = true }
+    private func play(_ song: Song) { player.play(song, from: filtered); showPlayer = true }
 }
 
 private extension Sequence where Element: Hashable {
@@ -291,10 +293,11 @@ struct ArtistView: View {
                 Button("Actualizar foto automáticamente") { Task { await library.loadArtistPhoto(artist, refresh: true) } }
                     .disabled(library.photoRequests.contains(artist))
             }
+            Section { NavigationLink("Información del artista") { ArtistInfoView(artist: artist) } }
             Section("\(songs.count) canciones en tu biblioteca") {
                 ForEach(songs) { song in
                     Button {
-                        player.play(song, from: songs.filter { !$0.isVideo })
+                        player.play(song, from: songs)
                     } label: { SongRow(song: song) }.buttonStyle(.plain)
                 }
             }

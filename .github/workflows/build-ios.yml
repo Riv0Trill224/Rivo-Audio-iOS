@@ -48,9 +48,9 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R DerivedData/Build/Products/Release-iphoneos/RivoAudio.app Payload/
-          zip -qry RivoAudio-iOS-v0.2.0-unsigned.ipa Payload
+          zip -qry RivoAudio-iOS-v0.3.0-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
-          name: RivoAudio-iOS-v0.2.0-unsigned
-          path: RivoAudio-iOS-v0.2.0-unsigned.ipa
+          name: RivoAudio-iOS-v0.3.0-unsigned
+          path: RivoAudio-iOS-v0.3.0-unsigned.ipa
           if-no-files-found: error

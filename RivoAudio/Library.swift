@@ -31,6 +31,8 @@ struct MusicFolder: Identifiable, Codable {
     @Published private(set) var songs: [Song] = []
     @Published private(set) var folders: [MusicFolder] = []
     @Published var message: String? = nil
+    @Published var extras = LibraryExtras()
+    @Published var scanning = false
     @Published var artistPhotos: [String: String] = [:]
     @Published var photoCredits: [String: ArtistPhotoCredit] = [:]
     @Published var photoStatus: [String: String] = [:]
@@ -56,6 +58,7 @@ struct MusicFolder: Identifiable, Codable {
            let saved = try? JSONDecoder().decode([String: ArtistPhotoCredit].self, from: data) { photoCredits = saved }
         if let data = try? Data(contentsOf: photoAttemptsURL),
            let saved = try? JSONDecoder().decode([String: Date].self, from: data) { photoAttempts = saved }
+        loadExtras()
         artworkCache.totalCostLimit = 24 * 1024 * 1024
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-fixture") {
@@ -110,7 +113,7 @@ struct MusicFolder: Identifiable, Codable {
         save()
     }
 
-    func scan() async {
+    func scan(force: Bool = false) async {
         let manager = FileManager.default
         guard let enumerator = manager.enumerator(at: musicDirectory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else { return }
         let urls = (enumerator.allObjects as? [URL] ?? []).filter { Self.extensions.contains($0.pathExtension.lowercased()) }
@@ -119,7 +122,7 @@ struct MusicFolder: Identifiable, Codable {
         for url in urls {
             guard let relative = MediaFiles.relativePath(of: url, under: musicDirectory),
                   (try? MediaFiles.validate(url)) != nil else { continue }
-            if let existing = old[relative], existing.metadataVerified != nil { result.append(existing); continue }
+            if !force, let existing = old[relative], existing.metadataVerified != nil { result.append(existing); continue }
             let asset = AVURLAsset(url: url)
             let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 0
             let items = (try? await asset.load(.commonMetadata)) ?? []
@@ -132,10 +135,17 @@ struct MusicFolder: Identifiable, Codable {
             let artist = value(.commonKeyArtist) ?? (parts.count >= 2 ? parts[0] : "Artista desconocido")
             var imported = Song(id: relative, title: title, artist: artist, album: value(.commonKeyAlbumName) ?? "Sin álbum", duration: duration.isFinite ? duration : 0, isVideo: ["mp4", "m4v", "mov"].contains(url.pathExtension.lowercased()))
             imported.metadataVerified = value(.commonKeyTitle) != nil && value(.commonKeyArtist) != nil
-            if var existing = old[relative] { existing.metadataVerified = imported.metadataVerified; imported = existing }
+            if var existing = old[relative] { existing.metadataVerified = imported.metadataVerified; existing.duration = imported.duration; imported = existing }
+            if extras.details[relative] == nil {
+                let metadata = (try? await asset.load(.metadata)) ?? []
+                let genre = metadata.first { ($0.identifier?.rawValue ?? "").lowercased().contains("genre") }?.stringValue ?? ""
+                let year = value(.commonKeyCreationDate) ?? ""
+                extras.details[relative] = TrackDetails(genre: genre, year: String(year.prefix(4)), credits: "", source: "")
+            }
             result.append(imported)
         }
         missingArtwork.removeAll()
+        saveExtras()
         songs = result.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         save()
     }
@@ -226,10 +236,15 @@ struct MusicFolder: Identifiable, Codable {
             do {
                 let sourceSize = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize
                 let targetSize = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize
-                if sourceSize == targetSize, targetSize != nil { continue }
+                let sourceDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                let targetDate = try? target.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                if sourceSize == targetSize, targetSize != nil, sourceDate == targetDate { continue }
                 try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
-                try await MediaFiles.copyForImport(from: file, to: target)
+                let temporary = target.deletingLastPathComponent().appendingPathComponent(".import-" + UUID().uuidString + "." + file.pathExtension)
+                defer { try? FileManager.default.removeItem(at: temporary) }
+                try await MediaFiles.copyForImport(from: file, to: temporary)
+                if FileManager.default.fileExists(atPath: target.path) { _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary) }
+                else { try FileManager.default.moveItem(at: temporary, to: target) }
                 count += 1
             } catch { failures += 1 }
         }

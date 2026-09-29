@@ -6,29 +6,47 @@ final class IntegrationTests: XCTestCase {
     func song(_ title: String, artist: String = "Example", video: Bool = false) -> Song {
         Song(id: title + (video ? ".mov" : ".wav"), title: title, artist: artist, album: "Album", duration: 180, isVideo: video)
     }
-    func testMediaMatchingKeepsVersionsAndArtistsDistinct() {
+    func testExactFilenameMatching() {
         let audio = song("My Song")
-        let official = song("My Song (Official Music Video)", video: true)
-        let live = song("My Song live", video: true)
-        let other = song("My Song", artist: "Another Artist", video: true)
-        let matches = MediaMatcher.candidates(for: audio, in: [official, live, other])
-        XCTAssertEqual(matches.map(\.id), [official.id])
-        XCTAssertEqual(MediaMatcher.automaticMatch(matches)?.id, official.id)
+        let exact = song("My Song", video: true)
+        let official = song("My Song Official Video", video: true)
+        XCTAssertEqual(MediaMatcher.candidates(for: audio, in: [exact, official]).map(\.id), [exact.id])
+        XCTAssertTrue(MediaMatcher.candidates(for: audio, in: [song("my song", video: true)]).isEmpty)
+        var second = exact; second.id = "other/My Song.mov"
+        XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [exact, second])))
     }
-    func testAmbiguousMatchRequiresChoice() {
-        let audio = song("My Song")
-        var first = song("My Song Official Video", video: true)
-        var second = first; first.id = "first.mov"; second.id = "second.mov"
-        XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [first, second])))
-        let unknown = song("My Song", artist: "Artista desconocido", video: true)
-        XCTAssertNil(MediaMatcher.automaticMatch(MediaMatcher.candidates(for: audio, in: [unknown])))
+    @MainActor func testExtrasSurviveScanAndReload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = MusicLibrary(documents: directory, scanOnStart: false)
+        let track = song("Saved")
+        try makeTone(at: library.url(for: track))
+        await library.scan()
+        var saved = try XCTUnwrap(library.songs.first); saved.rating = 5; library.update(saved)
+        library.setDetails(TrackDetails(genre: "Jazz", year: "2020", credits: "Productor: Example", source: "manual"), for: saved)
+        library.extras.playlists = [LocalPlaylist(name: "Mis pistas", video: false, songIDs: [saved.id]), LocalPlaylist(name: "Mis videos", video: true)]
+        library.saveExtras(); await library.fullScan()
+        let reload = MusicLibrary(documents: directory, scanOnStart: false)
+        XCTAssertEqual(reload.songs.first?.rating, 5)
+        XCTAssertEqual(reload.extras.playlists.count, 2)
+        XCTAssertEqual(reload.details(saved).credits, "Productor: Example")
     }
-    func testSimilarSpellingIsSuggestedButNeedsConfirmation() {
-        let audio = song("Blinding Lights")
-        let video = song("Blinding Ligths Official Video", video: true)
-        let matches = MediaMatcher.candidates(for: audio, in: [video])
-        XCTAssertEqual(matches.count, 1)
-        XCTAssertNil(MediaMatcher.automaticMatch(matches))
+    func testCreditsIncludeRecordingAndWorkParticipants() async {
+        let info = await MusicBrainzCatalog.parseCredits(["artist-credit": [["name": "Singer"]], "first-release-date": "2020-01-02", "relations": [["type": "producer", "artist": ["name": "Producer"]], ["work": ["relations": [["type": "lyricist", "artist": ["name": "Writer"]]]]]]], id: "test")
+        XCTAssertTrue(info.credits.contains("Productor: Producer")); XCTAssertTrue(info.credits.contains("Letrista: Writer")); XCTAssertEqual(info.year, "2020")
+    }
+    @MainActor func testVideoCompletionKeepsNextSongAndDoesNotLoop() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = MusicLibrary(documents: directory, scanOnStart: false)
+        let first = song("First"), next = song("Next"), video = song("First", video: true)
+        try makeTone(at: library.url(for: first)); try makeTone(at: library.url(for: next)); try await makeVideo(at: library.url(for: video)); await library.scan()
+        let player = AudioPlayer(); player.library = library
+        player.play(first, from: [first, next]); player.pause()
+        await player.switchToVideo(video)
+        XCTAssertEqual(player.videoPlayer?.audiovisualBackgroundPlaybackPolicy, .continuesIfPossible)
+        player.advanceAtEnd(); XCTAssertEqual(player.song?.id, next.id)
+        player.advanceAtEnd(); XCTAssertFalse(player.playing); XCTAssertEqual(player.song?.id, next.id)
     }
     func testLastFMSignatureAndEncoding() {
         let parameters = ["api_key": "abc", "method": "auth.getSession", "token": "xyz", "format": "json"]

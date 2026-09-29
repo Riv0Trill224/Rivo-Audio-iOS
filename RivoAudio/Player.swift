@@ -15,6 +15,9 @@ import Combine
     @Published private(set) var elapsed: TimeInterval = 0
     @Published var error: String?
     @Published private(set) var videoPlayer: AVPlayer?
+    @Published private(set) var currentVideo: Song?
+    @Published private(set) var outputName = "Salida del sistema"
+    @Published private(set) var outputSymbol = "speaker.wave.2"
     @Published private(set) var isVideoMode = false
     @Published private(set) var switchingMedia = false
     @Published private(set) var videoDuration: Double = 0
@@ -104,6 +107,8 @@ import Combine
         engine.connect(timePitch, to: engine.mainMixerNode, format: nil)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
+        updateOutput()
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.updateOutput() } }
         setupCommands()
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notice in
             if let raw = notice.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -113,9 +118,15 @@ import Combine
         }
     }
 
+    private func updateOutput() {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        outputName = outputs.map(\.portName).joined(separator: ", ")
+        let name = outputName.lowercased()
+        outputSymbol = name.contains("beats") ? "beats.studiobuds" : name.contains("airpods") ? "airpods" : outputs.contains(where: { $0.portType == .headphones || $0.portType == .bluetoothA2DP }) ? "headphones" : "speaker.wave.2"
+    }
     func setInterfaceActive(_ active: Bool) {
         interfaceActive = active
-        if active { tick() }
+        if active { tick(); updateOutput() }
         scheduleProgressTimer()
     }
     private func scheduleProgressTimer() {
@@ -170,8 +181,19 @@ import Combine
         lyricTask?.cancel()
         lyricTask = Task { [weak self] in await self?.library?.autoLyrics(for: selected) }
         if switchingMedia { generation += 1; switchingMedia = false }
-        let logical = selected.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) ?? selected) : selected
-        queue = collection
+        // A video playlist keeps videos. Album/track queues replace the paired
+        // audio in place, preserving the next song instead of creating a one-item loop.
+        let allVideo = !collection.isEmpty && collection.allSatisfy(\.isVideo)
+        let paired = selected.isVideo ? MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) : nil
+        let logical = allVideo ? selected : (paired ?? selected)
+        if allVideo { queue = collection }
+        else {
+            var seen = Set<String>()
+            queue = collection.compactMap { item in
+                let resolved = item.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: item, in: library?.songs ?? [])) ?? item) : item
+                return seen.insert(resolved.id).inserted ? resolved : nil
+            }
+        }
         if !queue.contains(where: { $0.id == logical.id }) { queue.insert(logical, at: 0) }
         currentIndex = queue.firstIndex(where: { $0.id == logical.id }) ?? 0
         if selected.isVideo {
@@ -198,15 +220,16 @@ import Combine
             let target = min(max(0, position), max(0, duration - 0.05))
             let item = AVPlayerItem(asset: asset)
             let candidate = AVPlayer(playerItem: item)
+            candidate.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
             let seekSucceeded = await candidate.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             guard generation == epoch else { candidate.pause(); return }
             guard seekSucceeded else { throw ServiceError(message: "No se pudo posicionar el video.") }
             if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer) }
-            videoPlayer = candidate; videoDuration = duration; isVideoMode = true; elapsed = target; lastSamplePosition = target
+            videoPlayer = candidate; currentVideo = video; videoDuration = duration; isVideoMode = true; elapsed = target; lastSamplePosition = target
             videoEndObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, self.generation == epoch, self.isVideoMode else { return }
-                    self.tick(); self.next()
+                    self.tick(); self.advanceAtEnd()
                 }
             }
             videoFailureObserver = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
@@ -244,7 +267,7 @@ import Combine
             listenedSeconds = 0; scrobbled = false; playStartedAt = Date()
         }
         lastSamplePosition = nil
-        videoPlayer?.pause(); videoPlayer = nil; isVideoMode = false; switchingMedia = false; videoSeeking = false
+        videoPlayer?.pause(); videoPlayer = nil; currentVideo = nil; isVideoMode = false; switchingMedia = false; videoSeeking = false
         if let observer = videoEndObserver { NotificationCenter.default.removeObserver(observer); videoEndObserver = nil }
         videoFailureObserver = nil
         generation += 1
@@ -276,7 +299,7 @@ import Combine
             node.scheduleSegment(audio, startingFrame: startFrame, frameCount: AVAudioFrameCount(min(remaining, Int64(UInt32.max))), at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 Task { @MainActor in
                     guard let self, self.generation == scheduledGeneration, self.playing else { return }
-                    self.next()
+                    self.advanceAtEnd()
                 }
             }
             elapsed = seconds
@@ -352,11 +375,20 @@ import Combine
         open(song, at: max(0, min(song.duration - 0.01, seconds)), preservingListen: true)
         if !wasPlaying { pause() }
     }
+    func advanceAtEnd() {
+        if repeatOne {
+            if isVideoMode { seek(to: 0); return }
+            if let song { play(song, from: queue) }; return
+        }
+        guard !queue.isEmpty else { pause(); return }
+        if shuffle && queue.count > 1 { let choices = queue.indices.filter { $0 != currentIndex }; play(queue[choices.randomElement()!], from: queue); return }
+        guard currentIndex + 1 < queue.count else { pause(); return }
+        play(queue[currentIndex + 1], from: queue)
+    }
     func next() {
         guard !queue.isEmpty else { return }
-        if repeatOne, let song { play(song, from: queue); return }
-        currentIndex = shuffle ? Int.random(in: queue.indices) : (currentIndex + 1) % queue.count
-        play(queue[currentIndex], from: queue)
+        let nextIndex = shuffle && queue.count > 1 ? queue.indices.filter { $0 != currentIndex }.randomElement()! : (currentIndex + 1) % queue.count
+        play(queue[nextIndex], from: queue)
     }
     func previous() {
         guard !queue.isEmpty else { return }

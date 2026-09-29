@@ -65,8 +65,8 @@ final class LaunchTests: XCTestCase {
         screenshot.name = "Ecualizador"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        app.tabBars.buttons["Transferir"].tap()
-        XCTAssertTrue(app.navigationBars["Transferir"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Ajustes"].tap()
+        XCTAssertTrue(app.navigationBars["Ajustes"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Escuchas"].tap()
         XCTAssertTrue(app.navigationBars["Scrobbling"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.secureTextFields["API key"].exists)

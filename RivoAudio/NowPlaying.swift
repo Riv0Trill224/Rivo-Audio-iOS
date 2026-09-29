@@ -6,6 +6,8 @@ struct NowPlayingView: View {
     @EnvironmentObject var player: AudioPlayer
     @Environment(\.dismiss) private var dismiss
     @State private var showSettings = false
+    @State private var showCredits = false
+    @State private var fullscreenVideo = false
     @State private var showLyrics = false
     @State private var showEQ = false
     @State private var showEditor = false
@@ -32,6 +34,7 @@ struct NowPlayingView: View {
                                 Text(player.isVideoMode ? "VIDEO LOCAL" : player.audioFormat)
                                     .font(.caption2.monospaced()).foregroundStyle(.white.opacity(0.5))
                                     .frame(maxWidth: .infinity)
+                                Label(player.outputName, systemImage: player.outputSymbol).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                                 footer
                             }
                             .frame(width: max(1, min(geometry.size.width, 500) - 48), alignment: .leading)
@@ -57,6 +60,8 @@ struct NowPlayingView: View {
                     Button("\(match.song.title) · \(match.song.id)") { Task { await player.switchToVideo(match.song) } }
                 }
             } message: { Text("El cambio conserva la posición. Las versiones pueden tener introducciones diferentes.") }
+            .fullScreenCover(isPresented: $fullscreenVideo) { FullscreenVideoView() }
+            .sheet(isPresented: $showCredits) { if let song = player.song { NavigationStack { CreditsView(song: song).toolbar { Button("Cerrar") { showCredits = false } } } }
             .sheet(isPresented: $showSettings) { NavigationStack { RivoSettingsView().toolbar { Button("Cerrar") { showSettings = false } } } }
             .sheet(isPresented: $showLyrics) { if let song = player.song { LyricsView(songID: song.id) } }
             .sheet(isPresented: $showEQ) { NavigationStack { EqualizerView().navigationTitle("Ecualizador").toolbar { Button("Cerrar") { showEQ = false } } } }
@@ -78,6 +83,7 @@ struct NowPlayingView: View {
             Spacer()
             Menu {
                 Button("Ajustes visuales y de audio") { showSettings = true }
+                Button("Créditos e información") { showCredits = true }
                 Button("Editar información y carátula") { showEditor = true }
                 Button("Letras sincronizadas") { showLyrics = true }
                 Button("Ver cola") { showQueue = true }
@@ -87,7 +93,10 @@ struct NowPlayingView: View {
     private func media(_ song: Song, width: CGFloat) -> some View {
         Group {
             if player.isVideoMode, let video = player.videoPlayer {
-                VideoSurface(player: video).aspectRatio(16 / 9, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 22))
+                VStack {
+                    VideoSurface(player: video).aspectRatio(16 / 9, contentMode: .fit).overlay(alignment: .bottom) { VideoLyricsOverlay() }.clipShape(RoundedRectangle(cornerRadius: 22))
+                    HStack { VideoLyricsToggle(); Spacer(); Button("Pantalla completa", systemImage: "arrow.up.left.and.arrow.down.right") { fullscreenVideo = true } }
+                }
             } else {
                 ArtworkView(image: cover, size: width)
                     .accessibilityElement(children: .ignore)
