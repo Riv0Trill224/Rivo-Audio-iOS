@@ -179,7 +179,8 @@ import Combine
 
     func play(_ selected: Song, from collection: [Song]) {
         lyricTask?.cancel()
-        lyricTask = Task { [weak self] in await self?.library?.autoLyrics(for: selected) }
+        let lyricSource = selected.isVideo ? (MediaMatcher.automaticMatch(MediaMatcher.candidates(for: selected, in: library?.songs ?? [])) ?? selected) : selected
+        lyricTask = Task { [weak self] in await self?.library?.autoLyrics(for: lyricSource) }
         if switchingMedia { generation += 1; switchingMedia = false }
         // A video playlist keeps videos. Album/track queues replace the paired
         // audio in place, preserving the next song instead of creating a one-item loop.
