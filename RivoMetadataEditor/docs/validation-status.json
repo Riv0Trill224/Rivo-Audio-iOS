@@ -1,9 +1,31 @@
 {
   "version": "0.2.0",
+  "source_commit": "cc0068b4d4e8d6290c31e1d654f2941acf9715eb",
+  "workflow_run": "https://github.com/Riv0Trill224/Rivo-Audio-iOS/actions/runs/37620877949",
+  "xcode_build": "passed",
   "swift_grammar": "passed",
-  "xcode_build": "CI required before IPA delivery",
-  "tests": "CoreTests, FolderTests, LaunchTests",
+  "simulator": "iPhone 13",
+  "tests": {
+    "passed": 15,
+    "skipped": 1,
+    "failed": 0,
+    "skip_reason": "The macOS-hosted iOS simulator has no /private/var alias; the directory symlink-alias regression passed."
+  },
+  "ipa": {
+    "filename": "RivoMetadataEditor-v0.2.0-unsigned.ipa",
+    "bytes": 1070892,
+    "sha256": "b87cd97dad1505f6d7fb273fccb20aad294ff0b0c1d9b842bcb7254a1d5c7965",
+    "version": "0.2.0",
+    "build": "2",
+    "bundle_id": "com.riv0trill.rivometadataeditor",
+    "architecture": "arm64",
+    "platform": "iOS device",
+    "minimum_ios": "18.0",
+    "unsigned": true,
+    "encrypted": false,
+    "zip_integrity": "passed"
+  },
   "device_test": "not run",
-  "genius_live_authenticated": "not run: personal token configured in iOS app",
-  "previous_release": "0.1.0 built with 8 passing simulator tests"
+  "fileprovider_icloud_physical_test": "not run",
+  "genius_live_authenticated": "not run: configure personal token in iOS app"
 }

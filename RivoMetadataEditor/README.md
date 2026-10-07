@@ -4,7 +4,7 @@ Editor nativo para canciones almacenadas como archivos en el iPhone o iCloud Dri
 
 ## Versión 0.2.0
 
-IPA nativa para iOS, sin firma para instalar mediante SideStore/AltStore. El CI compila con Xcode y ejecuta pruebas en simulador iPhone 13 antes de empaquetar. La versión 0.1.0 ya superó compilación y ocho pruebas; esta versión añade los casos de regresión descritos en `docs/ESTADO.md`.
+IPA nativa para iOS, sin firma para instalar mediante SideStore/AltStore. El CI compila con Xcode y ejecuta pruebas en simulador iPhone 13 antes de empaquetar. La versión 0.2.0 superó compilación y 15 pruebas en simulador (un caso de alias no disponible se omitió). [Ejecución verificada](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actions/runs/37620877949). La IPA es para iPhone arm64, mínimo iOS 18.0, versión 0.2.0/build 2. Consulta `docs/ESTADO.md` para límites y detalles.
 
 ### Letras y segundo motor
 

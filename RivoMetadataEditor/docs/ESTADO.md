@@ -14,6 +14,8 @@ App nativa iOS 18+, compilada mediante Xcode en GitHub Actions. Identificador `c
 
 ## Validación
 
+Compilación y empaquetado 0.2.0/build 2 completados. [GitHub Actions](https://github.com/Riv0Trill224/Rivo-Audio-iOS/actions/runs/37620877949). Quince pruebas superadas, una omitida y cero fallos. Se verificó la IPA: arm64, plataforma iOS dispositivo, mínimo 18.0, sin firma ni cifrado y ZIP íntegro. SHA-256: `b87cd97dad1505f6d7fb273fccb20aad294ff0b0c1d9b842bcb7254a1d5c7965`. La navegación tiene selección explícita para conservar la pestaña durante la carga asíncrona de datos.
+
 El CI ejecuta pruebas del puente en seis formatos, casos de identidad/versiones de canciones, decodificación Genius, estados de letras, exportación real en subcarpetas, alias de rutas, enlaces externos, protección de LRC existente y deshacer. La navegación se prueba en simulador iPhone 13. La IPA solo se empaqueta si las pruebas pasan.
 
 La prueba física en iPhone y los distintos proveedores de iCloud/Archivos siguen pendientes. El test de alias `/private/var` se omite explícitamente si el sistema no dispone de ese alias. Las pruebas de Genius validan respuestas de muestra; hace falta un token del usuario para verificar el servicio autenticado en vivo.
