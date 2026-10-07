@@ -27,15 +27,17 @@ struct RivoGlass: ViewModifier {
 extension View { func rivoGlass() -> some View { modifier(RivoGlass()) } }
 
 struct RootView: View {
+    private enum Screen: Hashable { case library, automation, pending, settings }
+    @State private var screen: Screen = .library
     @EnvironmentObject private var store: LibraryStore
     @Environment(\.scenePhase) private var phase
     var body: some View {
-        TabView {
-            NavigationStack { LibraryView() }.tabItem { Label("Biblioteca", systemImage: "music.note.list") }
-            NavigationStack { AutomationView() }.tabItem { Label("Automatizar", systemImage: "wand.and.stars") }
-            NavigationStack { PendingView() }.tabItem { Label("Pendientes", systemImage: "checklist") }
+        TabView(selection: $screen) {
+            NavigationStack { LibraryView() }.tabItem { Label("Biblioteca", systemImage: "music.note.list") }.tag(Screen.library)
+            NavigationStack { AutomationView() }.tabItem { Label("Automatizar", systemImage: "wand.and.stars") }.tag(Screen.automation)
+            NavigationStack { PendingView() }.tabItem { Label("Pendientes", systemImage: "checklist") }.tag(Screen.pending)
                 .badge(store.reviews.count + store.metadataReviews.count)
-            NavigationStack { SettingsView() }.tabItem { Label("Ajustes", systemImage: "slider.horizontal.3") }
+            NavigationStack { SettingsView() }.tabItem { Label("Ajustes", systemImage: "slider.horizontal.3") }.tag(Screen.settings)
         }
         .background(RivoStyle.ink)
         .alert("Rivo Metadata Editor", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {

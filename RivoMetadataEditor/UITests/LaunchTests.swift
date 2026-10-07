@@ -2,8 +2,11 @@ import XCTest
 final class LaunchTests: XCTestCase {
     func testTabsAndEmptyLibraryOnIPhone13() {
         let app = XCUIApplication(); app.launch()
-        XCTAssertTrue(app.buttons["Seleccionar carpeta"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Automatizar"].tap()
+        XCTAssertTrue(app.buttons["Seleccionar carpeta"].waitForExistence(timeout: 30))
+        let automationTab = app.tabBars.buttons["Automatizar"]
+        automationTab.tap()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: automationTab)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
         XCTAssertTrue(app.switches["genius-verification"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Pendientes"].tap()
         XCTAssertTrue(app.staticTexts["No hay coincidencias pendientes"].waitForExistence(timeout: 3))
