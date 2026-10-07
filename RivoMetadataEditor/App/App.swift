@@ -171,7 +171,7 @@ struct AutomationView: View {
                     Toggle("Solo analizar", isOn: $store.onlyAnalyze)
                     Toggle("Completar metadatos vacíos", isOn: $store.fillMetadata)
                     Toggle("Buscar portadas faltantes", isOn: $store.fillCovers)
-                    Text("Las letras existentes se conservan. Solo se descargan automáticamente coincidencias con título, artista, versión y duración seguros. Al salir de la app se detiene el trabajo; al volver puedes reanudarlo.")
+                    Text("Las letras existentes se conservan. Solo se descargan automáticamente coincidencias que pasan los controles de título, artista, versión y duración. Al salir de la app se detiene el trabajo; al volver puedes reanudarlo.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.padding(20).rivoGlass().disabled(store.isWorking)
                 Button { store.automate() } label: {
@@ -189,7 +189,10 @@ struct PendingView: View {
             if store.reviews.isEmpty && store.metadataReviews.isEmpty { Text("No hay coincidencias pendientes").foregroundStyle(.secondary) }
             Section("Letras") {
                 ForEach(store.reviews) { item in
-                    NavigationLink { LyricsSearchView(track: item.track, initial: item.candidates) } label: {
+                    NavigationLink {
+                        if item.track.hasLRC { LRCEditor(track: store.tracks.first { $0.id == item.id } ?? item.track) }
+                        else { LyricsSearchView(track: item.track, initial: item.candidates) }
+                    } label: {
                         VStack(alignment: .leading) { Text(item.track.title); Text(item.reason).font(.caption).foregroundStyle(.secondary) }
                     }.swipeActions { Button("Descartar", role: .destructive) { store.dismissReview(item.id) } }
                 }
@@ -252,6 +255,7 @@ struct SettingsView: View {
                 Text("Portadas: Cover Art Archive. Etiquetas: TagLib 2.3.2 (MPL 1.1 / LGPL 2.1). No se convierte ni recodifica el audio.").font(.footnote).foregroundStyle(.secondary)
             }
         }.scrollContentBackground(.hidden).background(RivoStyle.ink).navigationTitle("Ajustes").disabled(store.isWorking)
+        .onAppear { tokenStatus = GeniusCredentials.read().isEmpty ? "Sin token configurado" : "Token configurado en este iPhone" }
     }
 }
 

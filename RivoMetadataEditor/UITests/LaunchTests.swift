@@ -8,7 +8,12 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Pendientes"].tap()
         XCTAssertTrue(app.staticTexts["No hay coincidencias pendientes"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Ajustes"].tap()
-        XCTAssertTrue(app.staticTexts["Rivo Metadata Editor · 0.1.0"].waitForExistence(timeout: 3))
+        let tokenField = app.secureTextFields["Client Access Token"]
+        for _ in 0..<4 { if tokenField.exists { break }; app.swipeUp() }
+        XCTAssertTrue(tokenField.waitForExistence(timeout: 3))
+        let version = app.staticTexts["Rivo Metadata Editor · 0.2.0"]
+        for _ in 0..<5 { if version.exists { break }; app.swipeUp() }
+        XCTAssertTrue(version.waitForExistence(timeout: 3))
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Rivo Metadata Editor · iPhone 13"; attachment.lifetime = .keepAlways; add(attachment)
     }

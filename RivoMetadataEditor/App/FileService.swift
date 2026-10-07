@@ -42,7 +42,7 @@ actor FileService {
             throw RivoError.message("Selecciona una carpeta de música.")
         }
         // Reuse permission identity when the same folder is picked again.
-        let existingID = roots.first { $0.value.standardizedFileURL == url.standardizedFileURL }?.key ?? id
+        let existingID = roots.first { $0.value.resolvingSymlinksInPath() == url.resolvingSymlinksInPath() }?.key ?? id
         let bookmark = try url.bookmarkData(options: [.minimalBookmark], includingResourceValuesForKeys: nil, relativeTo: nil)
         roots[existingID] = url
         return MusicFolder(id: existingID, name: url.lastPathComponent, bookmark: bookmark)
@@ -132,7 +132,7 @@ actor FileService {
                     try Task.checkCancellation()
                     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                     guard values.isSymbolicLink != true else { e.skipDescendants(); continue }
-                    guard values.isRegularFile == true, Self.extensions.contains(url.pathExtension.lowercased()), seen.insert(url.standardizedFileURL.path).inserted else { continue }
+                    guard values.isRegularFile == true, Self.extensions.contains(url.pathExtension.lowercased()), seen.insert(url.resolvingSymlinksInPath().path).inserted else { continue }
                     files.append((folder.id, url, try FolderPaths.relative(url, root: root)))
                 }
                 if let enumerationError { throw enumerationError }

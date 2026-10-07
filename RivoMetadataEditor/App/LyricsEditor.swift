@@ -151,6 +151,7 @@ struct LyricsSearchView: View {
                 Button { preview = candidate } label: {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(candidate.trackName).font(.headline)
+                        Text(candidate.id < 0 ? "Origen: letra incrustada" : "Origen: LRCLIB").font(.caption).foregroundStyle(.secondary)
                         Text(candidate.artistName + " · " + candidate.albumName).font(.subheadline)
                         if genius.contains(where: { $0.matches(title: candidate.trackName, artist: candidate.artistName) }) {
                             Label("Título/artista también en Genius", systemImage: "checkmark.circle").font(.caption).foregroundStyle(RivoStyle.accent)
