@@ -1,0 +1,49 @@
+{
+  "passed": 6,
+  "formats": [
+    {
+      "format": ".aiff",
+      "unicode": true,
+      "explicit_clean_none": true,
+      "artwork_add_remove": true,
+      "audio_payload_unchanged": true
+    },
+    {
+      "format": ".wav",
+      "unicode": true,
+      "explicit_clean_none": true,
+      "artwork_add_remove": true,
+      "audio_payload_unchanged": true
+    },
+    {
+      "format": ".mp3",
+      "unicode": true,
+      "explicit_clean_none": true,
+      "artwork_add_remove": true,
+      "audio_payload_unchanged": true
+    },
+    {
+      "format": ".flac",
+      "unicode": true,
+      "explicit_clean_none": true,
+      "artwork_add_remove": true,
+      "audio_payload_unchanged": true
+    },
+    {
+      "format": ".m4a",
+      "unicode": true,
+      "explicit_clean_none": true,
+      "artwork_add_remove": true,
+      "audio_payload_unchanged": true
+    },
+    {
+      "format": ".ogg",
+      "unicode": true,
+      "explicit_clean_none": true,
+      "artwork_add_remove": true,
+      "audio_payload_unchanged": true
+    }
+  ],
+  "invalid_file_rejected": true,
+  "unknown_tags_star_rating_back_cover_preserved": true
+}

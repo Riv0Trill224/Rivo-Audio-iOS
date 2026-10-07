@@ -1,0 +1,57 @@
+name: Rivo Metadata Editor IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: metadata-editor-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools and SDK
+        run: |
+          brew install cmake xcodegen
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+      - uses: actions/cache@v4
+        with:
+          path: Vendor/TagLib.xcframework
+          key: taglib-232-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Vendor/SHA256SUMS', 'scripts/build-taglib.sh') }}
+      - name: Build TagLib for iPhone and simulator
+        run: test -d Vendor/TagLib.xcframework || bash scripts/build-taglib.sh
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Create iPhone 13 simulator
+        id: simulator
+        run: |
+          RIVO_RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[v for v in json.load(sys.stdin)["runtimes"] if v.get("isAvailable") and v["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")]; print(sorted(r,key=lambda v:tuple(map(int,v["version"].split("."))))[-1]["identifier"])')
+          RIVO_SIM=$(xcrun simctl create 'Rivo Metadata iPhone 13' com.apple.CoreSimulator.SimDeviceType.iPhone-13 "$RIVO_RUNTIME")
+          echo "id=$RIVO_SIM" >> "$GITHUB_OUTPUT"
+      - name: Metadata, LRC and UI tests
+        run: |
+          xcodebuild -project RivoMetadataEditor.xcodeproj -scheme RivoMetadataEditor \
+            -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' \
+            -parallel-testing-enabled NO -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO test
+      - name: Package IPA for SideStore
+        run: bash scripts/build-ipa.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RivoMetadataEditor-v0.1.0-unsigned
+          path: dist/*.ipa
+          if-no-files-found: error
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RivoMetadataEditor-test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore

@@ -1,0 +1,63 @@
+name: RivoMetadataEditor
+options:
+  bundleIdPrefix: com.riv0trill
+  deploymentTarget:
+    iOS: '18.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
+    CLANG_CXX_LIBRARY: libc++
+    IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  RivoMetadataEditor:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Bridge
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.riv0trill.rivometadataeditor
+        SWIFT_OBJC_BRIDGING_HEADER: Bridge/BridgingHeader.h
+        HEADER_SEARCH_PATHS: ['$(inherited)', '$(PROJECT_DIR)/Vendor/TagLib.xcframework/ios-arm64/Headers']
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        OTHER_LDFLAGS: ['$(inherited)', '-lc++', '-lz']
+    dependencies:
+      - framework: Vendor/TagLib.xcframework
+        embed: false
+  RivoMetadataEditorTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+        excludes: ['TagCLI.cpp', 'verify_native.py']
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Bridge/BridgingHeader.h
+    dependencies:
+      - target: RivoMetadataEditor
+  RivoMetadataEditorUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: RivoMetadataEditor
+schemes:
+  RivoMetadataEditor:
+    build:
+      targets:
+        RivoMetadataEditor: all
+    test:
+      targets: [RivoMetadataEditorTests, RivoMetadataEditorUITests]
+      gatherCoverageData: true

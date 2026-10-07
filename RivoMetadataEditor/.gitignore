@@ -1,0 +1,8 @@
+.build/
+dist/
+Vendor/TagLib.xcframework/
+*.xcodeproj/
+*.xcworkspace/
+TestResults.xcresult/
+__pycache__/
+.DS_Store
