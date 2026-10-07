@@ -79,7 +79,7 @@ struct MetadataReview: Identifiable, Codable, Sendable {
                 }
                 tracks = result
                 selected.formIntersection(Set(result.map(\.id)))
-                status = "\(tracks.count) archivos · \(tracks.filter(\.hasLRC).count) con LRC"
+                status = "\(tracks.count) archivos · \(tracks.filter(\.hasLRC).count) con LRC · \(tracks.filter(\.hasEmbeddedLyrics).count) con letra incrustada"
             } catch is CancellationError { status = "Análisis detenido" }
             catch { raise(error); status = "No se pudo completar el análisis" }
             isWorking = false; job = nil
@@ -115,10 +115,12 @@ struct MetadataReview: Identifiable, Codable, Sendable {
     private func queueLyrics(_ item: ReviewItem) { reviews.removeAll { $0.id == item.id }; reviews.append(item); persist() }
     private func queueMetadata(_ item: MetadataReview) { metadataReviews.removeAll { $0.id == item.id }; metadataReviews.append(item); persist() }
 
+    @Published var verifyGenius = true
+
     func automate() {
         guard !isWorking, !targets.isEmpty else { return }
         let snapshot = targets
-        let analyze = onlyAnalyze, metadata = fillMetadata, covers = fillCovers
+        let analyze = onlyAnalyze, metadata = fillMetadata, covers = fillCovers, crossCheck = verifyGenius
         isWorking = true; progress = JobProgress(total: snapshot.count); status = analyze ? "Analizando coincidencias" : "Automatización en curso"
         job = Task {
             for original in snapshot {
@@ -158,15 +160,40 @@ struct MetadataReview: Identifiable, Codable, Sendable {
                     try Task.checkCancellation()
                     track = try await files.refresh(track)
                     update(track)
-                    if track.hasLRC { progress.skipped += 1 }
-                    else {
+                    if track.hasLRC {
+                        progress.skipped += 1
+                        if track.lrcState != .synchronized {
+                            queueLyrics(ReviewItem(track: track, candidates: [], reason: track.lyricsStatus + ". Abre el editor para revisar el archivo existente."))
+                            progress.pending += 1
+                        }
+                    } else if let embedded = track.embeddedLRC {
+                        if !analyze {
+                            track = try await files.saveLRC(track, text: embedded)
+                            update(track); reviews.removeAll { $0.id == track.id }; progress.found += 1
+                        } else {
+                            let proposal = LyricsCandidate(id: -1, trackName: track.title, artistName: track.artist, albumName: track.album,
+                                duration: track.duration, instrumental: false, plainLyrics: nil, syncedLyrics: embedded)
+                            queueLyrics(ReviewItem(track: track, candidates: [proposal], reason: "Letra sincronizada incrustada: exportar LRC junto al audio"))
+                            progress.pending += 1
+                        }
+                    } else {
                         let candidates = try await services.lyrics(track)
-                        if let match = Match.automatic(candidates, track: track), let text = match.syncedLyrics, !analyze {
+                        var confirmed = !crossCheck
+                        var reason = candidates.isEmpty ? "Sin coincidencia" : "Requiere elegir una versión"
+                        if crossCheck, !candidates.isEmpty {
+                            do {
+                                let references = try await services.genius(title: track.title, artist: track.artist)
+                                confirmed = references.contains { $0.matches(title: track.title, artist: track.artist) }
+                                reason = confirmed ? "Título y artista coinciden en Genius; revisa versión y tiempos" : "Genius no confirma el título y artista; revisión manual"
+                            } catch is CancellationError { throw CancellationError() }
+                            catch { reason = "Contraste Genius pendiente: " + error.localizedDescription }
+                        }
+                        if let match = Match.automatic(candidates, track: track), let text = match.syncedLyrics, confirmed, !analyze {
                             track = try await files.saveLRC(track, text: text)
                             update(track); reviews.removeAll { $0.id == track.id }; progress.found += 1
                         } else {
                             queueLyrics(ReviewItem(track: track, candidates: candidates,
-                                                   reason: candidates.isEmpty ? "Sin coincidencia" : analyze ? "Propuesta: revisar antes de guardar" : "Requiere elegir una versión"))
+                                reason: analyze ? "Solo análisis. " + reason : reason))
                             progress.pending += 1
                         }
                     }

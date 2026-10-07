@@ -1,10 +1,9 @@
 {
-  "swift_files_grammar_checked": 9,
-  "swiftui_compile": "Not run: macOS/Xcode unavailable",
-  "simulator_tests": "Not run: macOS/Xcode unavailable",
-  "device_test": "Not run",
-  "ipa_created": false,
-  "native_tests": "Passed: six formats plus preservation and damaged file checks",
-  "lrclib_search_live_response": "Verified schema: 20 results",
-  "musicbrainz_live_response": "Could not verify JSON in this environment; retry during iOS acceptance test"
+  "version": "0.2.0",
+  "swift_grammar": "passed",
+  "xcode_build": "CI required before IPA delivery",
+  "tests": "CoreTests, FolderTests, LaunchTests",
+  "device_test": "not run",
+  "genius_live_authenticated": "not run: personal token configured in iOS app",
+  "previous_release": "0.1.0 built with 8 passing simulator tests"
 }

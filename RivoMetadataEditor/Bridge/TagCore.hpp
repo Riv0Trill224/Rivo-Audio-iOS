@@ -11,6 +11,8 @@ struct Metadata {
   int bitrate = 0;
   int sampleRate = 0;
   bool hasArtwork = false;
+  bool hasEmbeddedLyrics = false;
+  std::string embeddedSyncedLyrics;
 };
 Metadata read(const std::string &path, bool artwork = true);
 // Call only on a staging copy. The Swift file service verifies and commits it.

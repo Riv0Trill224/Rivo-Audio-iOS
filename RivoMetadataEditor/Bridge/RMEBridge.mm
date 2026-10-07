@@ -8,6 +8,7 @@
     for(const auto &[k,v] : m.fields) fields[@(k.c_str())] = @(v.c_str());
     return @{@"fields": fields, @"duration": @(m.duration), @"bitrate": @(m.bitrate),
              @"sampleRate": @(m.sampleRate), @"hasArtwork": @(m.hasArtwork),
+             @"hasEmbeddedLyrics": @(m.hasEmbeddedLyrics), @"embeddedSyncedLyrics": @(m.embeddedSyncedLyrics.c_str()),
              @"artwork": [NSData dataWithBytes:m.artwork.data() length:m.artwork.size()]};
   } catch(const std::exception &e) { return @{@"error": @(e.what())}; }
 }

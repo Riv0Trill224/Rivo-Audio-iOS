@@ -14,10 +14,10 @@ actor MusicServices {
     init() {
         let c = URLSessionConfiguration.default
         c.timeoutIntervalForRequest = 25; c.timeoutIntervalForResource = 45
-        c.httpAdditionalHeaders = ["User-Agent": "RivoMetadataEditor/0.1.0 (https://github.com/Riv0Trill224)"]
+        c.httpAdditionalHeaders = ["User-Agent": "RivoMetadataEditor/0.2.0 (https://github.com/Riv0Trill224)"]
         session = URLSession(configuration: c)
     }
-    private func request(_ url: URL, cache: Bool = true, maxBytes: Int = 4_000_000) async throws -> Data {
+    private func request(_ url: URL, cache: Bool = true, maxBytes: Int = 4_000_000, bearer: String? = nil) async throws -> Data {
         let key = SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
         let cached = cacheRoot.appendingPathComponent(key)
         if cache, let a = try? fm.attributesOfItem(atPath: cached.path), let date = a[.modificationDate] as? Date,
@@ -29,11 +29,16 @@ actor MusicServices {
             nextRequest[host] = earliest.addingTimeInterval(host == "musicbrainz.org" ? 1.1 : 0.4)
             let delay = earliest.timeIntervalSinceNow
             if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
-            let (data, response) = try await session.data(from: url)
+            var request = URLRequest(url: url)
+            if let bearer { request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization") }
+            let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw RivoError.message("Respuesta de red inválida.") }
             if [429, 503].contains(http.statusCode), attempt < 2 {
                 let delay = max(1, min(30, Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? pow(2, Double(attempt + 1))))
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)); continue
+            }
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw RivoError.message("\(host): acceso rechazado. Revisa el token de Genius en Ajustes si estabas usando ese motor.")
             }
             if http.statusCode == 404 { throw ServiceError.notFound }
             guard (200..<300).contains(http.statusCode) else { throw RivoError.message("\(host) respondió HTTP \(http.statusCode). Intenta de nuevo.") }
@@ -67,6 +72,17 @@ actor MusicServices {
         }
         var ids: Set<Int> = []
         return candidates.filter { ids.insert($0.id).inserted }.sorted { Match.score($0, track) > Match.score($1, track) }
+    }
+    func genius(title: String, artist: String) async throws -> [GeniusCandidate] {
+        let token = GeniusCredentials.read()
+        guard !token.isEmpty else { throw RivoError.message("Para buscar Genius dentro de la app, configura tu token en Ajustes. También puedes consultar su web sin token.") }
+        let u = try url("https://api.genius.com/search", ["q": [artist, title].filter { !$0.isEmpty }.joined(separator: " ")])
+        let response = try JSONDecoder().decode(GeniusSearch.self, from: await request(u, cache: false, bearer: token))
+        return response.songs.sorted {
+            let left = Match.similarity($0.title, title) + Match.similarity($0.artist, artist)
+            let right = Match.similarity($1.title, title) + Match.similarity($1.artist, artist)
+            return left > right
+        }
     }
     private func escapeLucene(_ value: String) -> String {
         value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")

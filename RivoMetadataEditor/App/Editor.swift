@@ -29,6 +29,7 @@ struct TrackEditor: View {
                 CoverView(data: artwork, size: 210).padding(.top, 12)
                 VStack(spacing: 6) {
                     Text(track.title).font(.title2.bold()).multilineTextAlignment(.center).lineLimit(3)
+                    Text((store.tracks.first { $0.id == track.id } ?? track).lyricsStatus).font(.caption).foregroundStyle(RivoStyle.accent)
                     Text(track.filename).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     Text("\(track.bitrate) kbps · \(track.sampleRate) Hz · \(Int(track.duration) / 60):\(String(format: "%02d", Int(track.duration) % 60))").font(.caption).foregroundStyle(RivoStyle.accent)
                 }.frame(maxWidth: .infinity)

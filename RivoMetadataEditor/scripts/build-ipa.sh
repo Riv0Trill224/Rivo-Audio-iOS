@@ -12,7 +12,7 @@ mkdir -p .build/Package/Payload
 rm -rf .build/Package/Payload/RivoMetadataEditor.app
 cp -R .build/DerivedData/Build/Products/Release-iphoneos/RivoMetadataEditor.app .build/Package/Payload/
 mkdir -p dist
-RIVO_IPA="$RIVO_ROOT/dist/RivoMetadataEditor-v0.1.0-unsigned.ipa"
+RIVO_IPA="$RIVO_ROOT/dist/RivoMetadataEditor-v0.2.0-unsigned.ipa"
 rm -f "$RIVO_IPA"
 (cd .build/Package && zip -qry "$RIVO_IPA" Payload)
 echo "IPA creada: $RIVO_IPA"

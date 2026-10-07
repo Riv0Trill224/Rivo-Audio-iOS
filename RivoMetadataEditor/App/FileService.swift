@@ -54,12 +54,30 @@ actor FileService {
         return try work(root)
     }
     private func path(_ relative: String, root: URL) throws -> URL {
-        let url = root.appendingPathComponent(relative).standardizedFileURL
-        guard url.path.hasPrefix(root.standardizedFileURL.path + "/"), !relative.split(separator: "/").contains("..") else {
-            throw RivoError.message("Ruta fuera de la carpeta autorizada.")
-        }
-        return url
+        try FolderPaths.resolve(relative, root: root)
     }
+    private func sidecar(_ audio: URL, root: URL) throws -> URL {
+        let parent = audio.deletingLastPathComponent()
+        let base = audio.deletingPathExtension().lastPathComponent
+        let matches = try fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil).filter {
+            $0.pathExtension.lowercased() == "lrc" && $0.deletingPathExtension().lastPathComponent == base
+        }
+        guard matches.count <= 1 else { throw RivoError.message("Hay varios LRC para este audio. Conserva una sola versión en su carpeta.") }
+        let candidate = matches.first ?? audio.deletingPathExtension().appendingPathExtension("lrc")
+        return try path(FolderPaths.relative(candidate, root: root), root: root)
+    }
+    private func sidecarState(_ url: URL) -> SidecarState {
+        guard fm.fileExists(atPath: url.path) else { return .missing }
+        do {
+            return try coordinated(url, write: false) { u in
+                guard try stamp(u).size <= 2_000_000 else { return .unreadable }
+                let bytes = try Data(contentsOf: u)
+                guard let text = String(data: bytes, encoding: .utf8) else { return .unreadable }
+                return (try? LRC.validate(text)) != nil ? .synchronized : .invalid
+            }
+        } catch { return .unreadable }
+    }
+
     private func coordinated<T>(_ url: URL, write: Bool, _ work: (URL) throws -> T) throws -> T {
         let coordinator = NSFileCoordinator(filePresenter: nil)
         var coordinationError: NSError?
@@ -89,13 +107,15 @@ actor FileService {
         if let e = result["error"] as? String { throw RivoError.message(e) }
         return result
     }
-    private func readTrack(_ url: URL, folderID: UUID, relative: String) throws -> Track {
-        try coordinated(url, write: false) { u in
+    private func readTrack(_ url: URL, root: URL, folderID: UUID, relative: String) throws -> Track {
+        let state = sidecarState(try sidecar(url, root: root))
+        return try coordinated(url, write: false) { u in
             let m = try bridge(u, artwork: false)
             return Track(folderID: folderID, relativePath: relative, tags: Tags(fields: m["fields"] as? [String: String] ?? [:]),
                          duration: m["duration"] as? Double ?? 0, bitrate: m["bitrate"] as? Int ?? 0,
                          sampleRate: m["sampleRate"] as? Int ?? 0, stamp: try stamp(u),
-                         hasLRC: fm.fileExists(atPath: u.deletingPathExtension().appendingPathExtension("lrc").path), hasArtwork: m["hasArtwork"] as? Bool ?? false)
+                         hasLRC: state != .missing, hasArtwork: m["hasArtwork"] as? Bool ?? false,
+                         lrcState: state, embeddedSyncedLyrics: m["embeddedSyncedLyrics"] as? String, embeddedDetected: m["hasEmbeddedLyrics"] as? Bool)
         }
     }
     func scan(_ folders: [MusicFolder], progress: @Sendable (Int, Int, String) async -> Void) async throws -> [Track] {
@@ -113,7 +133,7 @@ actor FileService {
                     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                     guard values.isSymbolicLink != true else { e.skipDescendants(); continue }
                     guard values.isRegularFile == true, Self.extensions.contains(url.pathExtension.lowercased()), seen.insert(url.standardizedFileURL.path).inserted else { continue }
-                    files.append((folder.id, url, String(url.path.dropFirst(root.path.count + 1))))
+                    files.append((folder.id, url, try FolderPaths.relative(url, root: root)))
                 }
                 if let enumerationError { throw enumerationError }
             }
@@ -122,7 +142,7 @@ actor FileService {
         for (index, entry) in files.enumerated() {
             try Task.checkCancellation()
             do {
-                let t = try access(entry.0) { _ in try readTrack(entry.1, folderID: entry.0, relative: entry.2) }
+                let t = try access(entry.0) { root in try readTrack(path(entry.2, root: root), root: root, folderID: entry.0, relative: entry.2) }
                 tracks.append(t)
             } catch {
                 tracks.append(Track(folderID: entry.0, relativePath: entry.2, tags: Tags(), duration: 0, bitrate: 0,
@@ -136,16 +156,17 @@ actor FileService {
         try access(track.folderID) { root in
             let url = try path(track.relativePath, root: root)
             let m = try coordinated(url, write: false) { try bridge($0, artwork: true) }
-            let lrcURL = url.deletingPathExtension().appendingPathExtension("lrc")
+            let lrcURL = try sidecar(url, root: root)
             let exists = fm.fileExists(atPath: lrcURL.path)
             let lrc: (String, String?) = exists ? try coordinated(lrcURL, write: false) { u in
+                guard try stamp(u).size <= 2_000_000 else { throw RivoError.message("La letra supera 2 MB.") }
                 let bytes = try Data(contentsOf: u)
                 guard bytes.count <= 2_000_000, let text = String(data: bytes, encoding: .utf8) else {
                     throw RivoError.message("La letra existente no es UTF-8 o supera 2 MB.")
                 }
                 return (text, try hash(u))
             } : ("", nil)
-            return TrackDetail(tags: Tags(fields: m["fields"] as? [String: String] ?? [:]), artwork: m["artwork"] as? Data ?? Data(), lrc: lrc.0, lrcHash: lrc.1, url: url)
+            return TrackDetail(tags: Tags(fields: m["fields"] as? [String: String] ?? [:]), artwork: m["artwork"] as? Data ?? Data(), lrc: exists ? lrc.0 : ((m["embeddedSyncedLyrics"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (m["fields"] as? [String: String])?["LYRICS"] ?? ""), lrcHash: lrc.1, url: url)
         }
     }
     func thumbnail(_ track: Track) throws -> Data {
@@ -163,7 +184,7 @@ actor FileService {
         return data
     }
     func refresh(_ track: Track) throws -> Track {
-        try access(track.folderID) { root in try readTrack(path(track.relativePath, root: root), folderID: track.folderID, relative: track.relativePath) }
+        try access(track.folderID) { root in try readTrack(path(track.relativePath, root: root), root: root, folderID: track.folderID, relative: track.relativePath) }
     }
     private func prepareHistory() throws {
         try fm.createDirectory(at: backupRoot, withIntermediateDirectories: true)
@@ -219,8 +240,12 @@ actor FileService {
         try LRC.validate(text)
         try prepareHistory()
         try access(track.folderID) { root in
-            let relative = LRC.filename(audio: track.relativePath)
-            let url = try path(relative, root: root)
+            let audio = try path(track.relativePath, root: root)
+            guard fm.fileExists(atPath: audio.path), try stamp(audio) == track.stamp else {
+                throw RivoError.message("El audio cambió o ya no existe. Vuelve a escanear antes de guardar la letra.")
+            }
+            let url = try sidecar(audio, root: root)
+            let relative = try FolderPaths.relative(url, root: root)
             try coordinated(url, write: true) { u in
                 let exists = fm.fileExists(atPath: u.path)
                 if exists {

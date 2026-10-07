@@ -52,6 +52,7 @@ struct LRCEditor: View {
     @State private var busy = true
     @State private var search = false
     @State private var overwrite = false
+    @State private var source = ""
     var body: some View {
         VStack(spacing: 14) {
             HStack {
@@ -67,7 +68,8 @@ struct LRCEditor: View {
             TextEditor(text: $text).font(.system(.body, design: .monospaced)).scrollContentBackground(.hidden)
                 .padding(8).background(RivoStyle.surface, in: RoundedRectangle(cornerRadius: 14))
                 .accessibilityLabel("Contenido LRC editable")
-            Text(LRC.filename(audio: track.filename)).font(.caption).foregroundStyle(.secondary)
+            Text(source).font(.caption).foregroundStyle(RivoStyle.accent)
+            Text(LRC.filename(audio: track.relativePath)).font(.caption).foregroundStyle(.secondary)
             Text("Edita texto, tiempos o cabeceras [ti:], [ar:] y [al:]. Guardar crea o actualiza el archivo junto al audio.").font(.caption).foregroundStyle(.secondary)
         }.padding(16).background(RivoStyle.ink).navigationTitle("Letra sincronizada").navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -79,6 +81,7 @@ struct LRCEditor: View {
         .task {
             do {
                 let d = try await FileService.shared.detail(track); text = d.lrc; existingHash = d.lrcHash
+                source = d.lrcHash != nil ? "Origen: LRC junto al audio" : d.lrc.isEmpty ? "Sin letra incrustada ni LRC" : "Origen: letra incrustada; guardar exporta un LRC"
                 do { try await player.load(track) } catch { store.raise(error) }
             } catch { store.raise(error) }
             busy = false
@@ -115,12 +118,33 @@ struct LyricsSearchView: View {
     @State private var artist = ""
     @State private var busy = false
     @State private var preview: LyricsCandidate?
+    @State private var genius: [GeniusCandidate] = []
+    @State private var geniusBusy = false
+    @State private var geniusMessage = ""
     var body: some View {
         List {
             Section("Buscar en LRCLIB") {
                 TextField("Título", text: $title)
                 TextField("Artista", text: $artist)
-                Button("Buscar otra vez") { search() }.disabled(busy || title.isEmpty)
+                Button("Buscar LRCLIB") { search() }.disabled(busy || geniusBusy || title.isEmpty)
+            }
+            Section("Contrastar con Genius") {
+                Button("Buscar Genius en la app") { searchGenius() }.disabled(busy || geniusBusy || title.isEmpty)
+                Link("Buscar letra en Genius · web", destination: GeniusCandidate.searchURL(title: title, artist: artist))
+                Text("Comprueba letra, título, artista y versión. Una coincidencia de datos no garantiza que los tiempos del LRC sean correctos.").font(.footnote).foregroundStyle(.secondary)
+                if geniusBusy { ProgressView("Consultando Genius…") }
+                if !geniusMessage.isEmpty { Text(geniusMessage).font(.footnote).foregroundStyle(.secondary) }
+                ForEach(genius) { song in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(song.title).font(.headline)
+                        Text(song.artist).font(.subheadline)
+                        if song.matches(title: title, artist: artist) {
+                            Label("Título y artista coinciden", systemImage: "checkmark.circle").font(.caption).foregroundStyle(RivoStyle.accent)
+                        } else { Text("Revisar identidad y versión").font(.caption).foregroundStyle(.orange) }
+                        if let url = song.pageURL { Link("Consultar letra en Genius", destination: url) }
+                        Button("Buscar LRC para esta canción") { title = song.title; artist = song.artist; search() }.disabled(busy || geniusBusy)
+                    }.padding(.vertical, 6)
+                }
             }
             if busy { ProgressView("Buscando letras…") }
             ForEach(candidates) { candidate in
@@ -128,6 +152,9 @@ struct LyricsSearchView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(candidate.trackName).font(.headline)
                         Text(candidate.artistName + " · " + candidate.albumName).font(.subheadline)
+                        if genius.contains(where: { $0.matches(title: candidate.trackName, artist: candidate.artistName) }) {
+                            Label("Título/artista también en Genius", systemImage: "checkmark.circle").font(.caption).foregroundStyle(RivoStyle.accent)
+                        }
                         Text("\(Int(candidate.duration)) s · \(Int(Match.score(candidate, track) * 100))% similitud · \(candidate.isSynced ? "LRC" : candidate.instrumental ? "Instrumental" : "Sin tiempos")").font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -154,6 +181,17 @@ struct LyricsSearchView: View {
                         }
                     }
             }
+        }
+    }
+    private func searchGenius() {
+        geniusBusy = true; geniusMessage = ""; genius = []
+        let queryTitle = title, queryArtist = artist
+        Task {
+            do {
+                genius = try await MusicServices.shared.genius(title: queryTitle, artist: queryArtist)
+                if genius.isEmpty { geniusMessage = "Genius no encontró coincidencias. Prueba la búsqueda web." }
+            } catch { geniusMessage = error.localizedDescription }
+            geniusBusy = false
         }
     }
     private func search() {

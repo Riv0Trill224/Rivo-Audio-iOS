@@ -125,10 +125,10 @@ struct TrackRow: View {
                     if track.tags.advisory == .explicit { Text("E").font(.caption2.bold()).padding(3).background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 3)) }
                     if track.tags.advisory == .clean { Text("CLEAN").font(.caption2).foregroundStyle(.secondary) }
                 }
+                Text(track.lyricsStatus).font(.caption2).foregroundStyle(RivoStyle.accent).fixedSize(horizontal: false, vertical: true)
                 Text(track.artist.isEmpty ? track.filename : track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 HStack {
                     Text((track.filename as NSString).pathExtension.uppercased())
-                    if track.hasLRC { Label("LRC", systemImage: "text.quote") }
                     if track.error != nil { Label("No legible", systemImage: "exclamationmark.triangle") }
                 }.font(.caption2).foregroundStyle(RivoStyle.accent)
             }
@@ -166,6 +166,8 @@ struct AutomationView: View {
                 Text("Completa tu biblioteca").font(.largeTitle.bold())
                 Text("\(store.targets.count) canciones · \(store.targets.filter { !$0.hasLRC }.count) sin LRC").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 16) {
+                    Toggle("Contrastar título y artista con Genius", isOn: $store.verifyGenius)
+                    Text("Genius requiere un token en Ajustes para el contraste automático. Sin confirmación, la canción pasa a Pendientes. Puedes consultar Genius y elegir el LRC manualmente.").font(.footnote).foregroundStyle(.secondary)
                     Toggle("Solo analizar", isOn: $store.onlyAnalyze)
                     Toggle("Completar metadatos vacíos", isOn: $store.fillMetadata)
                     Toggle("Buscar portadas faltantes", isOn: $store.fillCovers)
@@ -204,6 +206,8 @@ struct PendingView: View {
 }
 struct SettingsView: View {
     @EnvironmentObject private var store: LibraryStore
+    @State private var geniusToken = ""
+    @State private var tokenStatus = ""
     var body: some View {
         List {
             Section("Carpetas autorizadas") {
@@ -224,10 +228,25 @@ struct SettingsView: View {
             Section("Clasificación de contenido") {
                 Text("M4A/MP4 utiliza rtng: 0 sin clasificar, 1 explícito, 2 limpio. MP3, FLAC y otros formatos guardan ITUNESADVISORY. La insignia E depende del soporte del reproductor.").font(.footnote)
             }
+            Section("Genius · segunda fuente") {
+                SecureField("Client Access Token", text: $geniusToken).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Guardar token") {
+                    do { try GeniusCredentials.save(geniusToken); geniusToken = ""; tokenStatus = "Token guardado en este iPhone" }
+                    catch { store.raise(error) }
+                }.disabled(geniusToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Eliminar token", role: .destructive) {
+                    do { try GeniusCredentials.save(""); geniusToken = ""; tokenStatus = "Token eliminado" }
+                    catch { store.raise(error) }
+                }
+                if !tokenStatus.isEmpty { Text(tokenStatus).font(.caption) }
+                Link("Crear token en Genius", destination: URL(string: "https://genius.com/api-clients")!)
+                Text("La búsqueda en la web funciona sin token. La búsqueda integrada contrasta título y artista, y enlaza a la letra de Genius. Los tiempos LRC provienen de LRCLIB o de tu archivo.").font(.footnote).foregroundStyle(.secondary)
+            }
             Section("Acerca de") {
-                Text("Rivo Metadata Editor · 0.1.0")
+                Text("Rivo Metadata Editor · 0.2.0")
                 Text("Riv0Trill224").foregroundStyle(RivoStyle.accent)
                 Link("GitHub · Riv0Trill224", destination: URL(string: "https://github.com/Riv0Trill224")!)
+                Link("Letras · Genius", destination: URL(string: "https://genius.com")!)
                 Link("Letras · LRCLIB", destination: URL(string: "https://lrclib.net")!)
                 Link("Metadatos · MusicBrainz", destination: URL(string: "https://musicbrainz.org")!)
                 Text("Portadas: Cover Art Archive. Etiquetas: TagLib 2.3.2 (MPL 1.1 / LGPL 2.1). No se convierte ni recodifica el audio.").font(.footnote).foregroundStyle(.secondary)

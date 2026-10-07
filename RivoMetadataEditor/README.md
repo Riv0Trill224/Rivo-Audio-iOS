@@ -2,9 +2,19 @@
 
 Editor nativo para canciones almacenadas como archivos en el iPhone o iCloud Drive. Interfaz SwiftUI con la paleta de Rivo Audio iOS y Liquid Glass nativo en iOS 26 o posterior; compatible desde iOS 18. Identificador: `com.riv0trill.rivometadataeditor`.
 
-## Estado de esta entrega
+## Versión 0.2.0
 
-**Código inicial 0.1.0. Todavía no hay una IPA compilada ni una prueba en dispositivo.** El núcleo C++ de etiquetas se compiló y verificó en Linux. Los seis formatos de prueba conservaron exactamente los datos de audio al cambiar etiquetas. Los scripts y el flujo de GitHub Actions generan una IPA sin firma para instalarla mediante SideStore / AltStore. Este ZIP de código no es una IPA y no se debe renombrar como tal.
+IPA nativa para iOS, sin firma para instalar mediante SideStore/AltStore. El CI compila con Xcode y ejecuta pruebas en simulador iPhone 13 antes de empaquetar. La versión 0.1.0 ya superó compilación y ocho pruebas; esta versión añade los casos de regresión descritos en `docs/ESTADO.md`.
+
+### Letras y segundo motor
+
+Debajo del título se muestran por separado la letra incrustada y el LRC vecino: presente y sincronizado, sin tiempos válidos, ilegible o ausente. Lee LYRICS/USLT/©lyr/Vorbis y detecta SYLT en MP3. Puede exportar SYLT en milisegundos o LRC incrustado; no inventa tiempos para texto sin sincronizar.
+
+LRCLIB proporciona LRC. Genius permite buscar una segunda coincidencia y consultar su letra. En Ajustes puedes guardar tu **Client Access Token** de Genius en el Keychain del iPhone, o usar la búsqueda web sin token. No hay un token compartido incluido en el proyecto. Su API se usa para título/artista y enlaces, no para descargar un supuesto LRC de Genius.
+
+La automatización exige por defecto contraste de título/artista con Genius además de los controles de versión, álbum y duración de LRCLIB. Sin confirmación se deja la canción en Pendientes para selección manual. Puedes desactivar el contraste. Ningún porcentaje garantiza que dos versiones tengan los mismos tiempos.
+
+El LRC se guarda **en la carpeta original del audio**, con su mismo nombre base. La validación de rutas preserva el permiso de la carpeta y resuelve correctamente alias de iOS y archivos nuevos. No sobrescribe un LRC existente sin abrirlo y confirmar. `Song.LRC` también se reconoce.
 
 ## Funciones implementadas en el código
 
@@ -36,7 +46,7 @@ Editor nativo para canciones almacenadas como archivos en el iPhone o iCloud Dri
    ```
 
 4. El push inicia automáticamente **Actions → Rivo Metadata Editor IPA**. El flujo compila TagLib para iPhone/simulador, genera el proyecto, ejecuta las pruebas en iPhone 13 y empaqueta la IPA solamente si pasan.
-5. En una ejecución exitosa descarga el artefacto **RivoMetadataEditor-v0.1.0-unsigned**. Extrae su ZIP: dentro estará **RivoMetadataEditor-v0.1.0-unsigned.ipa**.
+5. En una ejecución exitosa descarga el artefacto **RivoMetadataEditor-v0.2.0-unsigned**. Extrae su ZIP: dentro estará **RivoMetadataEditor-v0.2.0-unsigned.ipa**.
 6. Importa la IPA en SideStore, que aplica la firma personal e instala la app. Esta entrega no incluye certificados ni modifica tu cuenta de Apple.
 
 Si la compilación falla, la app aún no está lista para instalar. Conserva el enlace de la ejecución y revisa el primer error real; el proyecto incluye un artefacto de resultados de pruebas.
@@ -50,7 +60,7 @@ brew install cmake xcodegen
 bash scripts/build-ipa.sh
 ```
 
-La salida será `dist/RivoMetadataEditor-v0.1.0-unsigned.ipa`. Para ejecutar desde Xcode abre el `.xcodeproj` generado, selecciona tu equipo de firma y un dispositivo/simulador. El código usa APIs de iOS 26 dentro de una comprobación de disponibilidad.
+La salida será `dist/RivoMetadataEditor-v0.2.0-unsigned.ipa`. Para ejecutar desde Xcode abre el `.xcodeproj` generado, selecciona tu equipo de firma y un dispositivo/simulador. El código usa APIs de iOS 26 dentro de una comprobación de disponibilidad.
 
 ## Usar la primera compilación
 
@@ -62,17 +72,17 @@ La salida será `dist/RivoMetadataEditor-v0.1.0-unsigned.ipa`. Para ejecutar des
 
 Las canciones descargadas dentro de la biblioteca de Apple Music o protegidas con DRM no son archivos editables de esta app. Los proveedores de Archivos pueden ser de solo lectura o tener el archivo pendiente de descarga; esos errores se muestran. No se escanea todo el almacenamiento sin el permiso de una carpeta.
 
-## Comprobaciones ya realizadas
+## Comprobaciones
 
-`docs/native-test-results.json` contiene seis pruebas de escritura y lectura independientes con TagLib 2.3.2 y Mutagen: MP3, M4A, FLAC, Ogg, WAV y AIFF. Verifican Unicode, explícito/limpio/sin clasificar, portada, borrado de título, duración y SHA-256 del contenido de audio. También rechazan un archivo falso sin audio válido. La gramática de los nueve archivos Swift y la sintaxis Bash/YAML/plist fueron revisadas. Esto **no sustituye** la compilación SwiftUI, las pruebas de sandbox/FileProvider ni la prueba en un iPhone.
+Las pruebas C++ originales verificaron preservación de audio y etiquetas con Mutagen en MP3, M4A, FLAC, Ogg, WAV y AIFF. El CI añade lectura/escritura real de letras incrustadas en esos formatos, SYLT, rutas seguras, escaneo de subcarpetas, creación y reemplazo de LRC, protección frente a cambios externos y deshacer. También prueba navegación SwiftUI en iPhone 13.
 
-`Tests/CoreTests.swift` comprueba versiones de canciones, ambigüedades, tiempos LRC, UTF-8, clasificación y el puente de etiquetas. `UITests/LaunchTests.swift` comprueba navegación en iPhone 13. Son pruebas preparadas para Xcode, aún no ejecutadas en esta entrega.
+Consulta `docs/ESTADO.md` para límites y pendientes de prueba física. Los proveedores de iCloud/Archivos y la API de Genius autenticada requieren validación en tu dispositivo y cuenta.
 
 ## Alcance de compatibilidad
 
 La app detecta MP3, M4A/MP4, FLAC, Ogg/Vorbis, Opus, WAV, AIFF, APE, WavPack, WMA, DSF/DFF y MPC. Los campos o portadas no admitidos por un formato fallan con un mensaje y se conserva el original. Los seis primeros formatos de la suite tienen verificación nativa local; los demás necesitan muestras y prueba en iOS antes de anunciarlos como comprobados. AAC sin contenedor, archivos DRM y la base interna de Apple Music están fuera del alcance de esta primera versión.
 
-Los renombrados automáticos, análisis de ReplayGain y edición visual de una línea LRC con botón para marcar su tiempo no forman parte de 0.1.0. El editor actual permite cambiar el texto/timestamp directamente y desplazar todos los tiempos.
+Los renombrados automáticos, análisis de ReplayGain y edición visual de una línea LRC con botón para marcar su tiempo no forman parte de 0.2.0. El editor actual permite cambiar el texto/timestamp directamente y desplazar todos los tiempos.
 
 ## Fuentes y créditos
 
@@ -82,6 +92,7 @@ Los renombrados automáticos, análisis de ReplayGain y edición visual de una l
 - [utfcpp 4.0.6](https://github.com/nemtrif/utfcpp/tree/v4.0.6)
 - [Mapeo de clasificación de contenido](https://docs.mp3tag.de/mapping/#itunesadvisory)
 - [LRCLIB](https://lrclib.net/docs)
+- [Genius API](https://docs.genius.com/)
 - [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API)
 - [Cover Art Archive](https://musicbrainz.org/doc/Cover_Art_Archive/API)
 

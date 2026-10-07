@@ -44,10 +44,36 @@ struct Track: Identifiable, Codable, Sendable {
     var hasLRC: Bool
     var hasArtwork: Bool = false
     var error: String?
+    var lrcState: SidecarState? = nil
+    var embeddedSyncedLyrics: String? = nil
+    var embeddedDetected: Bool? = nil
+    var hasEmbeddedLyrics: Bool { embeddedDetected == true || !tags["LYRICS"].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var embeddedLRC: String? {
+        if let text = embeddedSyncedLyrics, (try? LRC.validate(text)) != nil { return text }
+        let text = tags["LYRICS"]
+        return (try? LRC.validate(text)) != nil ? text : nil
+    }
+    var lyricsStatus: String {
+        guard error == nil else { return "Letras: no se pudo analizar" }
+        let embedded = hasEmbeddedLyrics ? (embeddedLRC == nil ? "Incrustada: sí" : "Incrustada: sincronizada") : "Incrustada: no"
+        return embedded + " · " + (lrcState?.label ?? (hasLRC ? "LRC: presente" : "LRC: no"))
+    }
     var filename: String { (relativePath as NSString).lastPathComponent }
     var title: String { tags["TITLE"].isEmpty ? (filename as NSString).deletingPathExtension : tags["TITLE"] }
     var artist: String { tags["ARTIST"] }
     var album: String { tags["ALBUM"] }
+}
+
+enum SidecarState: String, Codable, Sendable {
+    case missing, synchronized, invalid, unreadable
+    var label: String {
+        switch self {
+        case .missing: return "LRC: no"
+        case .synchronized: return "LRC: sincronizado"
+        case .invalid: return "LRC: sin tiempos válidos"
+        case .unreadable: return "LRC: no legible"
+        }
+    }
 }
 
 struct LyricsCandidate: Identifiable, Codable, Sendable {
@@ -59,7 +85,7 @@ struct LyricsCandidate: Identifiable, Codable, Sendable {
     let instrumental: Bool
     let plainLyrics: String?
     let syncedLyrics: String?
-    var isSynced: Bool { syncedLyrics.map { LRC.hasTimestamps($0) } ?? false }
+    var isSynced: Bool { syncedLyrics.map { (try? LRC.validate($0)) != nil } ?? false }
 }
 struct ReviewItem: Identifiable, Codable, Sendable {
     var id: String { track.id }

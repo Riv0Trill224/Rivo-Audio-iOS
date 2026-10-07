@@ -5,6 +5,10 @@
 #include <taglib/mp4file.h>
 #include <taglib/mp4tag.h>
 #include <taglib/mp4item.h>
+#include <taglib/mpegfile.h>
+#include <taglib/id3v2tag.h>
+#include <taglib/synchronizedlyricsframe.h>
+#include <cstdio>
 #include <stdexcept>
 #include <algorithm>
 
@@ -37,6 +41,37 @@ Rivo::Metadata Rivo::read(const std::string &path, bool includeArtwork) {
   result.hasArtwork = file.complexPropertyKeys().contains("PICTURE");
   const auto props = file.properties();
   for(const auto &k : keys) result.fields[k] = get(props, k);
+  for(const auto &entry : props) {
+    const auto key = utf8(entry.first);
+    if(key == "LYRICS" || key.rfind("LYRICS:", 0) == 0) {
+      for(const auto &value : entry.second) {
+        if(!value.stripWhiteSpace().isEmpty()) {
+          result.hasEmbeddedLyrics = true;
+          if(result.fields["LYRICS"].empty()) result.fields["LYRICS"] = utf8(value);
+        }
+      }
+    }
+  }
+  if(auto mpeg = dynamic_cast<TagLib::MPEG::File *>(file.file())) {
+    if(auto tag = mpeg->ID3v2Tag(false)) {
+      for(auto raw : tag->frameList("SYLT")) {
+        auto lyrics = dynamic_cast<TagLib::ID3v2::SynchronizedLyricsFrame *>(raw);
+        if(!lyrics || lyrics->type() != TagLib::ID3v2::SynchronizedLyricsFrame::Lyrics || lyrics->synchedText().isEmpty()) continue;
+        result.hasEmbeddedLyrics = true;
+        // MPEG-frame timestamps cannot be treated as milliseconds.
+        if(lyrics->timestampFormat() != TagLib::ID3v2::SynchronizedLyricsFrame::AbsoluteMilliseconds || !result.embeddedSyncedLyrics.empty()) continue;
+        for(const auto &line : lyrics->synchedText()) {
+          if(line.text.stripWhiteSpace().isEmpty()) continue;
+          char stamp[40];
+          std::snprintf(stamp, sizeof(stamp), "[%02u:%02u.%03u]", line.time / 60000, (line.time / 1000) % 60, line.time % 1000);
+          auto text = utf8(line.text);
+          std::replace(text.begin(), text.end(), '\n', ' ');
+          std::replace(text.begin(), text.end(), '\r', ' ');
+          result.embeddedSyncedLyrics += std::string(stamp) + text + "\n";
+        }
+      }
+    }
+  }
   if(auto mp4 = dynamic_cast<TagLib::MP4::File *>(file.file())) {
     result.hasArtwork = !mp4->tag()->item("covr").toCoverArtList().isEmpty();
     if(mp4->tag()->contains("rtng")) {
