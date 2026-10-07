@@ -163,10 +163,10 @@ struct AutomationView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                Text("Completa tu biblioteca").font(.largeTitle.bold())
+                Text("Completa tu biblioteca").font(.largeTitle.bold()).accessibilityIdentifier("automation-title")
                 Text("\(store.targets.count) canciones · \(store.targets.filter { !$0.hasLRC }.count) sin LRC").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 16) {
-                    Toggle("Contrastar título y artista con Genius", isOn: $store.verifyGenius)
+                    Toggle("Contrastar título y artista con Genius", isOn: $store.verifyGenius).accessibilityIdentifier("genius-verification")
                     Text("Genius requiere un token en Ajustes para el contraste automático. Sin confirmación, la canción pasa a Pendientes. Puedes consultar Genius y elegir el LRC manualmente.").font(.footnote).foregroundStyle(.secondary)
                     Toggle("Solo analizar", isOn: $store.onlyAnalyze)
                     Toggle("Completar metadatos vacíos", isOn: $store.fillMetadata)

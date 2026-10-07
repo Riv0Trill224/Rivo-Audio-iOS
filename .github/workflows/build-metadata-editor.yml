@@ -49,6 +49,17 @@ jobs:
           name: RivoMetadataEditor-v0.2.0-unsigned
           path: RivoMetadataEditor/dist/*.ipa
           if-no-files-found: error
+      - name: Export UI screenshots
+        if: always()
+        continue-on-error: true
+        run: xcrun xcresulttool export attachments --path TestResults.xcresult --output-path UIScreenshots
+      - name: Save UI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RivoMetadataEditor-ui-screenshots
+          path: RivoMetadataEditor/UIScreenshots
+          if-no-files-found: ignore
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@v4

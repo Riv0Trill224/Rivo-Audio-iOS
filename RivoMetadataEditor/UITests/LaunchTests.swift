@@ -4,7 +4,7 @@ final class LaunchTests: XCTestCase {
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.buttons["Seleccionar carpeta"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Automatizar"].tap()
-        XCTAssertTrue(app.staticTexts["Completa tu biblioteca"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.switches["genius-verification"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Pendientes"].tap()
         XCTAssertTrue(app.staticTexts["No hay coincidencias pendientes"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Ajustes"].tap()
